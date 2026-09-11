@@ -14,7 +14,6 @@
   <!-- External Stylesheets & Fonts -->
   <link rel="stylesheet" href="css/style.css">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Karla:400,700&display=swap">
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:100,200&display=swap">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/3.7.2/animate.min.css">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
 
@@ -241,13 +240,6 @@
       color: #E6E6E6;
     }
 
-    p.game_title {
-      font-style: italic;
-      max-width: 800px;
-      margin: 20px auto 40px;
-      line-height: 1.5;
-    }
-
     /* Search & Filter Bar */
     .game_title {
       width: 100%;
@@ -397,62 +389,40 @@
       display: flex !important;
     }
 
-    /* Floating Particles Background */
-    .light {
-      position: fixed;
-      width: 2px;
-      height: 2px;
-      background-color: white;
-      box-shadow: #e9f1f1 0px 0px 20px 2px;
-      opacity: 0;
-      bottom: 0;
-      pointer-events: none;
-      z-index: 1;
+    /* Disclaimer Section */
+    .disclaimer-wrapper {
+      flex-basis: 100%;
+      width: 100%;
+      display: flex;
+      justify-content: center;
+      margin-top: 35px;
     }
 
-    .x1 { animation: floatUp 4s infinite linear; left: 5%; transform: scale(1.0); }
-    .x2 { animation: floatUp 7s infinite linear; left: 15%; transform: scale(1.6); }
-    .x3 { animation: floatUp 2.5s infinite linear; left: 25%; transform: scale(0.5); }
-    .x4 { animation: floatUp 4.5s infinite linear; left: 35%; transform: scale(1.2); }
-    .x5 { animation: floatUp 8s infinite linear; left: 50%; transform: scale(2.2); }
-    .x6 { animation: floatUp 3s infinite linear; left: 65%; transform: scale(0.8); }
-    .x7 { animation: floatUp 5.3s infinite linear; left: 75%; transform: scale(3.2); }
-    .x8 { animation: floatUp 4.7s infinite linear; left: 85%; transform: scale(1.7); }
-    .x9 { animation: floatUp 4.1s infinite linear; left: 95%; transform: scale(0.9); }
-
-    @keyframes floatUp {
-      0% { top: 100vh; opacity: 0; }
-      25% { opacity: 0.8; }
-      50% { top: 50vh; opacity: 0.6; }
-      75% { opacity: 0.8; }
-      100% { top: -10vh; opacity: 0; }
+    .disclaimer {
+      max-width: 800px;
+      text-align: center;
+      font-style: italic;
+      color: #aaa;
+      font-size: 0.95rem;
+      line-height: 1.6;
+      margin: 0;
+      padding: 0 15px;
     }
   </style>
 </head>
 
 <body>
-  <!-- Background Light FX -->
-  <div class="light x1"></div>
-  <div class="light x2"></div>
-  <div class="light x3"></div>
-  <div class="light x4"></div>
-  <div class="light x5"></div>
-  <div class="light x6"></div>
-  <div class="light x7"></div>
-  <div class="light x8"></div>
-  <div class="light x9"></div>
-
   <!-- Navigation Bar -->
   <div class="navbar">
     <span class="navbar-item" onclick="toggleCloak();" id="toggleCloak">Enable Tab Cloak</span>
-    <span class="navbar-item" onclick="alert('Update Log (Scroll Down for Credits)\n\nV1.4 (3/5/25)\n-Fixed Getaway Shootout\n\nV1.2 (10/28/24)\n-Fixed Age of War\n-Fixed Basketball Stars\n\nV1.1\n-Added new game: Hills of Steel\n-(I plan on adding more games soon)\n\nv1.0\n - Fixed Header Bug\n - Added Top Bar\n - Added Tab Cloak (In Beta)\n - Added Update Log\n - Fixed Favicon not showing\n\nCredits:\n-Py660 for the code for the top bar header, and update log code.\n-Nebelung for finding the Tab Cloak code')">Update Log</span>
+    <span class="navbar-item" onclick="alert('Update Log (Scroll Down for Credits)\n\nV1.5 (9/11/26)\n-Updated code structure to make it more efficient (background maintence update) Don\'t expect and new updates or support to this website \n\nV1.2 (10/28/24)\n-Fixed Age of War\n-Fixed Basketball Stars\n\nV1.1\n-Added new game: Hills of Steel\n-(I plan on adding more games soon)\n\nv1.0\n - Fixed Header Bug\n - Added Top Bar\n - Added Tab Cloak (In Beta)\n - Added Update Log\n - Fixed Favicon not showing\n\nCredits:\n-Py660 for the code for the top bar header, and update log code.\n-Nebelung for finding the Tab Cloak code')">Update Log & Credits</span>
   </div>
 
   <div id="website-content">
     <img id="userPhoto" class="animated rubberBand slow" src="icons/logo.png" alt="PoopyGamesLogo">
     <h1><a href="https://lizzyben4.github.io/poopy9000/" target="_blank">Poopy Games</a></h1>
 
-    <!-- Games Container: Changed to fadeIn -->
+    <!-- Games Container -->
     <div id="links" class="animated fadeIn delay-1s games">
       <div class="game_title">
         <input placeholder="Search" id="search" class="search" onkeyup="search_it()" type="search">
@@ -481,7 +451,7 @@
       <a id="Monkey Mart" class="link" onclick="cloak('/play/monkey-mart/')" target="_blank"><span class="bar"></span><img src="./icons/monkey.webp" alt="Monkey Mart"><b>Monkey Mart</b><span class="badge"><i class="fa fa-wrench" aria-hidden="true"></i> FIXED</span></a>
       <a id="Getaway Shootout" class="link" onclick="cloak('/play/getaway/')" target="_blank"><span class="bar"></span><img src="./icons/getaway.jpeg" alt="Getaway Shootout"><b>Getaway Shootout</b><span class="badge"><i class="fa fa-wrench" aria-hidden="true"></i> FIXED</span></a>
       <a id="Troll Platformer 3" class="link" onclick="cloak('/play/troll-platformer-3')" target="_blank"><span class="bar"></span><img src="./icons/troll-platformer-3.png" alt="Troll Platformer 3"><b>Troll Platformer 3</b><span class="badge"><i class="fa fa-star" aria-hidden="true"></i> NEW</span></a>
-      <a id="Gambling Simulator" class="link" onclick="cloak('/play/gamble/v1.1/gamble is fun/')" target="_blank"><span class="bar"></span><img src="./icons/gamble.jpg" alt="Gambling Sim"><b>Gambling Sim</b><span class="badge"><i class="fa fa-credit-card" aria-hidden="true"></i> GAMBLING</span></a>
+      <a id="Gambling Simulator" class="link" onclick="cloak('/play/gamble/v1.1/gamble is fun/')" target="_blank"><span class="bar"></span><img src="./icons/gamble.jpg" alt="Gambling Sim"><b>Gambling Sim</b><span class="badge"><i class="fa-credit-card" aria-hidden="true"></i> GAMBLING</span></a>
       <a id="OvO" class="link" onclick="cloak('/play/OvO/')" target="_blank"><span class="bar"></span><img src="./icons/ovo.png" alt="OvO"><b>OvO</b></a>
       <a id="Block Blast" class="link" onclick="cloak('/play/blockblast/')" target="_blank"><span class="bar"></span><img src="./icons/blockblast.jpg" alt="Block Blast"><b>Block Blast</b></a>
       <a id="soccerrandom" class="link" onclick="cloak('/play/soccerrandom/')" target="_blank"><span class="bar"></span><img src="./icons/soccerrandom.webp" alt="Soccer Random"><b>Soccer Random</b></a>
@@ -605,7 +575,7 @@
       <a id="motox3m Pool Party" class="link" onclick="cloak('/play/motox3m-pool/')" target="_blank"><span class="bar"></span><img src="./icons/motox3m-pool.webp" alt="Motox3m Pool Party"><b>Motox3m Pool Party</b></a>
       <a id="motox3m Spooky Land" class="link" onclick="cloak('/play/motox3m-spooky/')" target="_blank"><span class="bar"></span><img src="./icons/moto-spook.webp" alt="Motox3m Spooky Land"><b>Motox3m Spooky Land</b></a>
       <a id="motox3m Winter" class="link" onclick="cloak('/play/motox3m-winter/')" target="_blank"><span class="bar"></span><img src="./icons/motox3m-winter.webp" alt="Motox3m Winter"><b>Motox3m Winter</b></a>
-      <a id="motox3m2" class="link" onclick="cloak('/play/motox3m2/')" target="_blank"><span class="bar"></span><img src="./icons/motox3m2.webp" alt="Motox3m 2"><b>Motox3m2</b></a>
+      <a id="motox3m2" class="link" onclick="cloak('/play/motox3m2/')" target="_blank"><span class="bar"></span><img src="./icons/motox3m2.webp" alt="Motox3m 2"><b>motox3m2</b></a>
       <a id="Multiplayer Pong" class="link two" onclick="cloak('/play/multiplayer-pong/')" target="_blank"><span class="bar"></span><img src="./icons/pong.webp" alt="Multiplayer Pong"><b>Multiplayer Pong</b><span class="badge"><i class="fa-solid fa-user"></i> 2 Player</span></a>
       <a id="Pacman" class="link" onclick="cloak('/play/pacman/')" target="_blank"><span class="bar"></span><img src="./icons/pacman.webp" alt="Pacman"><b>Pacman</b></a>
       <a id="Papery Planes" class="link" onclick="cloak('/play/papery-planes/')" target="_blank"><span class="bar"></span><img src="./icons/paperplane.webp" alt="Papery Planes"><b>Papery Planes</b></a>
@@ -667,7 +637,10 @@
       <a id="Zombs Royale" class="link" onclick="cloak('/404/')" target="_blank"><span class="bar"></span><img src="./icons/zombs-royale.webp" alt="Zombs Royale"><b>Zombs Royale</b></a>
       <a id="Yoshifabrication" class="link" onclick="cloak('/play/yoshifabrication/')" target="_blank"><span class="bar"></span><img src="./icons/yoshifabrication.webp" alt="Yoshifabrication"><b>Yoshifabrication</b></a>
 
-      <p class="game_title">Please do not play these games in school without permission. Doing so can result in losing a computer or other school punishment. You also agree that we are using analysis to collect data like how you are on the website, how many live users are on our website, and what games you play.</p>
+      <!-- Isolated Full-Width Disclaimer -->
+      <div class="disclaimer-wrapper">
+        <p class="disclaimer">Please do not play these games in school without permission. Doing so can result in losing a computer or other school punishment. You also agree that we are using analysis to collect data like how you are on the website, how many live users are on our website, and what games you play.</p>
+      </div>
     </div>
   </div>
 
