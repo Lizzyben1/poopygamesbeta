@@ -15,11 +15,11 @@
   <link rel="stylesheet" href="css/style.css">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Karla:400,700&display=swap">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/3.7.2/animate.min.css">
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
+  <!-- Font Awesome 6 Full Release (Replaces broken FA5/Kit conflict) -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
 
   <!-- Core Libraries -->
   <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-  <script src="https://kit.fontawesome.com/d0c5025972.js" crossorigin="anonymous"></script>
 
   <!-- Analytics & Redirects -->
   <script>
@@ -369,7 +369,7 @@
       height: 44px;
     }
 
-    /* Badges */
+    /* Badges & Icons */
     .badge {
       position: absolute;
       top: 8px;
@@ -383,6 +383,14 @@
       font-size: 0.75rem;
       font-weight: bold;
       box-shadow: 0px 0px 4px rgba(0, 0, 0, 0.5);
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .badge i {
+      font-family: "Font Awesome 6 Free" !important;
+      font-weight: 900;
     }
 
     .active {
@@ -444,31 +452,30 @@
         <b>Game Request</b>
         <span class="badge"><i class="fa-solid fa-circle-exclamation"></i> HELP</span>
       </a>
-      <a id="Unblocked Chat" class="link" onclick="cloak('/play/chat/')" target="_blank"><span class="bar"></span><img src="./icons/imessgae.webp" alt="Unblocked Chat"><b>Unblocked Chat</b><span class="badge"><i class="fa fa-star" aria-hidden="true"></i> NEW</span></a>
-      <a id="Monkey Mart" class="link" onclick="cloak('/play/monkey-mart/')" target="_blank"><span class="bar"></span><img src="./icons/monkey.webp" alt="Monkey Mart"><b>Monkey Mart</b><span class="badge"><i class="fa fa-wrench" aria-hidden="true"></i> FIXED</span></a>
-      <a id="Getaway Shootout" class="link" onclick="cloak('/play/getaway/')" target="_blank"><span class="bar"></span><img src="./icons/getaway.jpeg" alt="Getaway Shootout"><b>Getaway Shootout</b><span class="badge"><i class="fa fa-chain-broken" aria-hidden="true"></i> BROKEN</span></a>
-      <a id="Troll Platformer 3" class="link" onclick="cloak('/play/troll-platformer-3')" target="_blank"><span class="bar"></span><img src="./icons/troll-platformer-3.png" alt="Troll Platformer 3"><b>Troll Platformer 3</b><span class="badge"><i class="fa fa-star" aria-hidden="true"></i> NEW</span></a>
-      <a id="Gambling Simulator" class="link" onclick="cloak('/play/gamble/v1.1/gamble is fun/')" target="_blank"><span class="bar"></span><img src="./icons/gamble.jpg" alt="Gambling Sim"><b>Gambling Sim</b><span class="badge"><i class="fa-credit-card" aria-hidden="true"></i> GAMBLING</span></a>
+      <a id="Unblocked Chat" class="link" onclick="cloak('/play/chat/')" target="_blank"><span class="bar"></span><img src="./icons/imessgae.webp" alt="Unblocked Chat"><b>Unblocked Chat</b><span class="badge"><i class="fa-solid fa-star"></i> NEW</span></a>
+      <a id="Monkey Mart" class="link" onclick="cloak('/play/monkey-mart/')" target="_blank"><span class="bar"></span><img src="./icons/monkey.webp" alt="Monkey Mart"><b>Monkey Mart</b><span class="badge"><i class="fa-solid fa-wrench"></i> FIXED</span></a>
+      <a id="Troll Platformer 3" class="link" onclick="cloak('/play/troll-platformer-3')" target="_blank"><span class="bar"></span><img src="./icons/troll-platformer-3.png" alt="Troll Platformer 3"><b>Troll Platformer 3</b><span class="badge"><i class="fa-solid fa-star"></i> NEW</span></a>
+      <a id="Gambling Simulator" class="link" onclick="cloak('/play/gamble/v1.1/gamble is fun/')" target="_blank"><span class="bar"></span><img src="./icons/gamble.jpg" alt="Gambling Sim"><b>Gambling Sim</b><span class="badge"><i class="fa-solid fa-credit-card"></i> GAMBLING</span></a>
       <a id="OvO" class="link" onclick="cloak('/play/OvO/')" target="_blank"><span class="bar"></span><img src="./icons/ovo.png" alt="OvO"><b>OvO</b></a>
       <a id="Block Blast" class="link" onclick="cloak('/play/blockblast/')" target="_blank"><span class="bar"></span><img src="./icons/blockblast.jpg" alt="Block Blast"><b>Block Blast</b></a>
       <a id="soccerrandom" class="link" onclick="cloak('/play/soccerrandom/')" target="_blank"><span class="bar"></span><img src="./icons/soccerrandom.webp" alt="Soccer Random"><b>Soccer Random</b></a>
-      <a id="basketrandom" class="link" onclick="cloak('/play/basketrandom/')" target="_blank"><span class="bar"></span><img src="./icons/basketrandom.webp" alt="Basket Random"><b>Basket Random</b><span class="badge"><i class="fa fa-wrench" aria-hidden="true"></i> FIXED</span></a>
+      <a id="basketrandom" class="link" onclick="cloak('/play/basketrandom/')" target="_blank"><span class="bar"></span><img src="./icons/basketrandom.webp" alt="Basket Random"><b>Basket Random</b><span class="badge"><i class="fa-solid fa-wrench"></i> FIXED</span></a>
       <a id="Baksetball Stars" class="link" onclick="cloak('/play/basketball-stars/')" target="_blank"><span class="bar"></span><img src="./icons/basketball-stars.png" alt="Basketball Stars"><b>Basketball Stars</b></a>
       <a id="Rocket Pult" class="link" onclick="cloak('/play/rocket-pult/')" target="_blank"><span class="bar"></span><img src="./icons/Rocketpult.webp" alt="Rocket Pult"><b>Rocket Pult</b></a>
-      <a id="Geometry Dash" class="link" onclick="cloak('/play/geodash/index.html')" target="_blank"><span class="bar"></span><img src="./icons/geodash.webp" alt="Geometry Dash"><b>Geometry Dash</b><span class="badge"><i class="fa fa-wrench" aria-hidden="true"></i> FIXED</span></a>
-      <a id="Stickman Bike" class="link" onclick="cloak('/play/stickman-bike/warning/index.html')" target="_blank"><span class="bar"></span><img src="./icons/stickman.webp" alt="Stickman Bike"><b>Stickman Bike</b><span class="badge"><i class="fa fa-wrench" aria-hidden="true"></i> FIXED</span></a>
-      <a id="Dreadhead Parkour" class="link" onclick="cloak('/play/dreadhead/')" target="_blank"><span class="bar"></span><img src="./icons/dread.wepg" alt="Dreadhead Parkour"><b>Dreadhead Parkour</b><span class="badge"><i class="fa fa-wrench" aria-hidden="true"></i> FIXED</span></a>
-      <a id="Gun Spin" class="link" onclick="cloak('/play/gunspin/')" target="_blank"><span class="bar"></span><img src="./icons/gunspin.wepg" alt="Gun Spin"><b>Gun Spin</b><span class="badge"><i class="fa fa-wrench" aria-hidden="true"></i> FIXED</span></a>
-      <a id="Stick Merge" class="link" onclick="cloak('/play/stick-merge/')" target="_blank"><span class="bar"></span><img src="./icons/stickmerge.jpeg" alt="Stick Merge"><b>Stick Merge</b><span class="badge"><i class="fa fa-wrench" aria-hidden="true"></i> FIXED</span></a>
+      <a id="Geometry Dash" class="link" onclick="cloak('/play/geodash/index.html')" target="_blank"><span class="bar"></span><img src="./icons/geodash.webp" alt="Geometry Dash"><b>Geometry Dash</b><span class="badge"><i class="fa-solid fa-wrench"></i> FIXED</span></a>
+      <a id="Stickman Bike" class="link" onclick="cloak('/play/stickman-bike/warning/index.html')" target="_blank"><span class="bar"></span><img src="./icons/stickman.webp" alt="Stickman Bike"><b>Stickman Bike</b><span class="badge"><i class="fa-solid fa-wrench"></i> FIXED</span></a>
+      <a id="Dreadhead Parkour" class="link" onclick="cloak('/play/dreadhead/')" target="_blank"><span class="bar"></span><img src="./icons/dread.wepg" alt="Dreadhead Parkour"><b>Dreadhead Parkour</b><span class="badge"><i class="fa-solid fa-wrench"></i> FIXED</span></a>
+      <a id="Gun Spin" class="link" onclick="cloak('/play/gunspin/')" target="_blank"><span class="bar"></span><img src="./icons/gunspin.wepg" alt="Gun Spin"><b>Gun Spin</b><span class="badge"><i class="fa-solid fa-wrench"></i> FIXED</span></a>
+      <a id="Stick Merge" class="link" onclick="cloak('/play/stick-merge/')" target="_blank"><span class="bar"></span><img src="./icons/stickmerge.jpeg" alt="Stick Merge"><b>Stick Merge</b><span class="badge"><i class="fa-solid fa-wrench"></i> FIXED</span></a>
       <a id="Minecraft Case Simulator" class="link" onclick="cloak('/play/minecraftcase/')" target="_blank"><span class="bar"></span><img src="./icons/minecraftcase.webp" alt="Minecraft Case Simulator"><b>Minecraft Case Simulator</b></a>
       <a id="Unicycle Hero" class="link" onclick="cloak('/play/unicycle-hero/')" target="_blank"><span class="bar"></span><img src="./icons/unicycle-hero.webp" alt="Unicycle Hero"><b>Unicycle Hero</b></a>
       <a id="Stick Fighters" class="link" onclick="cloak('/play/stick-fighter/')" target="_blank"><span class="bar"></span><img src="./icons/stick-fighter.webp" alt="Stick Fighter"><b>Stick Fighter</b></a>
-      <a id="swingo" class="link" onclick="cloak('/play/Swingo/')" target="_blank"><span class="bar"></span><img src="./icons/swingo.webp" alt="Swingo"><b>Swingo</b><span class="badge"><i class="fa fa-wrench" aria-hidden="true"></i> FIXED</span></a>
+      <a id="swingo" class="link" onclick="cloak('/play/Swingo/')" target="_blank"><span class="bar"></span><img src="./icons/swingo.webp" alt="Swingo"><b>Swingo</b><span class="badge"><i class="fa-solid fa-wrench"></i> FIXED</span></a>
       <a id="Snow Rider" class="link" onclick="cloak('/play/snow-rider/')" target="_blank"><span class="bar"></span><img src="./icons/snow-rider.webp" alt="Snow Rider 3D"><b>Snow Rider 3D</b></a>
       <a id="Drive Mad" class="link" onclick="cloak('/play/drive-mad/')" target="_blank"><span class="bar"></span><img src="./play/drive-mad/logo.jpeg" alt="Drive Mad"><b>Drive Mad</b></a>
       <a id="Uno" class="link" onclick="cloak('/play/uno-fixed/')" target="_blank"><span class="bar"></span><img src="./icons/uno.webp" alt="Uno"><b>Uno</b></a>
       <a id="Death run 3d" class="link" onclick="cloak('/play/death-run-3d/')" target="_blank"><span class="bar"></span><img src="./icons/deathrun3d.webp" alt="Death Run 3D"><b>Death Run 3D</b></a>
-      <a id="Ages of Conflict" class="link" onclick="cloak('/play/ages-of-conflict/')" target="_blank"><span class="bar"></span><img src="./icons/ages-of-conflict.webp" alt="Ages of Conflict"><b>Ages of Conflict</b><span class="badge"><i class="fa fa-wrench" aria-hidden="true"></i> FIXED</span></a>
+      <a id="Ages of Conflict" class="link" onclick="cloak('/play/ages-of-conflict/')" target="_blank"><span class="bar"></span><img src="./icons/ages-of-conflict.webp" alt="Ages of Conflict"><b>Ages of Conflict</b><span class="badge"><i class="fa-solid fa-wrench"></i> FIXED</span></a>
       <a id="House-of-hazards" class="link" onclick="cloak('/play/house-of-hazards/')" target="_blank"><span class="bar"></span><img src="./icons/houseofhazards.webp" alt="House of Hazards"><b>House of Hazards</b></a>
       <a id="10-minutes" class="link" onclick="cloak('/play/10-minutes-till-dawn/')" target="_blank"><span class="bar"></span><img src="./icons/10m.webp" alt="10 Minutes Till Dawn"><b>10 Minutes Till Dawn</b></a>
       <a id="Paper.io 2" class="link" onclick="cloak('/play/paperio/')" target="_blank"><span class="bar"></span><img src="./icons/paperio.webp" alt="Paper.io 2"><b>Paper.io 2</b></a>
@@ -632,10 +639,11 @@
       <a id="xx142-b2exe" class="link" onclick="cloak('/play/xx142-b2exe/')" target="_blank"><span class="bar"></span><img src="./icons/xx142-b2exe.webp" alt="xx142-b2exe"><b>xx142-b2exe</b></a>
       <a id="Zombs Royale" class="link" onclick="cloak('/404/')" target="_blank"><span class="bar"></span><img src="./icons/zombs-royale.webp" alt="Zombs Royale"><b>Zombs Royale</b></a>
       <a id="Yoshifabrication" class="link" onclick="cloak('/play/yoshifabrication/')" target="_blank"><span class="bar"></span><img src="./icons/yoshifabrication.webp" alt="Yoshifabrication"><b>Yoshifabrication</b></a>
-      <a id="Volley Random" class="link" onclick="cloak('./play/volleyrandom/')" target="_blank"><span class="bar"></span><img src="./icons/volleyrandom.webp" alt="Volley Random"><b>Volley Random</b><span class="badge"><i class="fa fa-chain-broken" aria-hidden="true"></i> BROKEN</span></a>
-      <a id="Indian Truck Simulator 3D" class="link" onclick="cloak('/play/indiantruck/')" target="_blank"><span class="bar"></span><img src="./icons/truck.webp" alt="Indian Truck Simulator"><b>Indian Truck Simulator 3D</b><span class="badge"><i class="fa fa-chain-broken" aria-hidden="true"></i> BROKEN</span></a>
-      <a id="SandTris" class="link" onclick="cloak('/play/sandris/')" target="_blank"><span class="bar"></span><img src="./icons/sandtris.webp" alt="SandTris"><b>SandTris</b><span class="badge"><i class="fa fa-chain-broken" aria-hidden="true"></i> BROKEN</span></a>
-      <a id="AgeofWar" class="link" onclick="cloak('/play/Ages-of-War/')" target="_blank"><span class="bar"></span><img src="./icons/ageofwar.webp" alt="Age of War"><b>Age of War</b><span class="badge"><i class="fa fa-chain-broken" aria-hidden="true"></i> BROKEN</span></a>      
+      <a id="Volley Random" class="link" onclick="cloak('./play/volleyrandom/')" target="_blank"><span class="bar"></span><img src="./icons/volleyrandom.webp" alt="Volley Random"><b>Volley Random</b><span class="badge"><i class="fa-solid fa-link-slash"></i> BROKEN</span></a>
+      <a id="Indian Truck Simulator 3D" class="link" onclick="cloak('/play/indiantruck/')" target="_blank"><span class="bar"></span><img src="./icons/truck.webp" alt="Indian Truck Simulator"><b>Indian Truck Simulator 3D</b><span class="badge"><i class="fa-solid fa-link-slash"></i> BROKEN</span></a>
+      <a id="SandTris" class="link" onclick="cloak('/play/sandris/')" target="_blank"><span class="bar"></span><img src="./icons/sandtris.webp" alt="SandTris"><b>SandTris</b><span class="badge"><i class="fa-solid fa-link-slash"></i> BROKEN</span></a>
+      <a id="AgeofWar" class="link" onclick="cloak('/play/Ages-of-War/')" target="_blank"><span class="bar"></span><img src="./icons/ageofwar.webp" alt="Age of War"><b>Age of War</b><span class="badge"><i class="fa-solid fa-link-slash"></i> BROKEN</span></a>      
+      <a id="Getaway Shootout" class="link" onclick="cloak('/play/getaway/')" target="_blank"><span class="bar"></span><img src="./icons/getaway.jpeg" alt="Getaway Shootout"><b>Getaway Shootout</b><span class="badge"><i class="fa-solid fa-link-slash"></i> BROKEN</span></a>
 
       <!-- Isolated Full-Width Disclaimer -->
       <div class="disclaimer-wrapper">
