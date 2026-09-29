@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>The Last Bell</title>
+  <link rel="stylesheet" href="styles.css" />
+
+  <!-- Three.js via ES Modules (CDN) -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <canvas id="scene"></canvas>
+
+  <!-- ============ HUD ============ -->
+  <div id="hud">
+    <!-- Cutscene letterbox (first, so the dialogue box always draws over it) -->
+    <div id="letterbox"><div class="bar top"></div><div class="bar bottom"></div></div>
+
+    <div id="crosshair"><span></span><span></span></div>
+
+    <div id="objective-banner">
+      <div id="objective-label">OBJECTIVE</div>
+      <div id="objective-text">Pack your bag &amp; prep for XC practice.</div>
+    </div>
+
+    <div id="interact-prompt" class="hidden">
+      <span class="key">E</span>
+      <span id="interact-label">Interact</span>
+    </div>
+
+    <div id="stealth-meter" class="hidden">
+      <div id="stealth-icon">&#9673;</div>
+      <div id="stealth-bar-track"><div id="stealth-bar-fill"></div></div>
+    </div>
+
+    <div id="flashlight-indicator" class="hidden">
+      FLASHLIGHT <span id="flashlight-state">OFF</span>
+    </div>
+
+    <div id="dialogue-box" class="hidden">
+      <div id="dialogue-speaker"></div>
+      <div id="dialogue-text"></div>
+    </div>
+
+    <div id="message-toast" class="hidden"></div>
+  </div>
+
+  <!-- ============ Title screen / chapter select / pause (pointer-lock overlay) ============ -->
+  <div id="start-overlay">
+    <div id="start-panel">
+      <h1>THE LAST BELL</h1>
+      <h2 id="menu-subtitle" class="hidden"></h2>
+
+      <div id="main-menu" class="menu">
+        <button class="menu-btn" id="play-btn">PLAY</button>
+        <button class="menu-btn menu-secondary" id="chapters-btn">CHAPTER SELECT</button>
+        <button class="menu-btn menu-secondary hard-toggle hidden" data-hard-toggle>HARD MODE: OFF</button>
+      </div>
+
+      <div id="chapter-menu" class="menu hidden">
+        <button class="menu-btn chapter-btn" data-chapter="1">
+          <span class="chapter-num">CHAPTER 1</span><span class="chapter-name">The Last Bell</span>
+        </button>
+        <button class="menu-btn chapter-btn" data-chapter="2">
+          <span class="chapter-num">CHAPTER 2</span><span class="chapter-name">Below the Oak</span>
+        </button>
+        <button class="menu-btn chapter-btn" data-chapter="3">
+          <span class="chapter-num">CHAPTER 3</span><span class="chapter-name">Lights Out</span>
+        </button>
+        <button class="menu-btn menu-secondary hard-toggle hidden" data-hard-toggle>HARD MODE: OFF</button>
+        <button class="menu-btn menu-secondary" id="chapters-back">BACK</button>
+      </div>
+
+      <div id="pause-menu" class="menu hidden">
+        <button class="menu-btn" id="resume-btn">CLICK TO RESUME</button>
+        <button class="menu-btn menu-secondary" id="quit-btn">MAIN MENU</button>
+      </div>
+
+      <p class="controls-hint">
+        <span><b>WASD</b> Move</span>
+        <span><b>Mouse</b> Look</span>
+        <span><b>Shift</b> Sprint</span>
+        <span><b>C</b> Crouch</span>
+        <span><b>E</b> Interact / Hide</span>
+        <span><b>F</b> Flashlight</span>
+        <span><b>LMB</b> Fire</span>
+        <span><b>R</b> Reload</span>
+        <span><b>RMB</b> Throw / Guard</span>
+        <span><b>Sprint + C</b> Slide</span>
+        <span><b>Space</b> Break free</span>
+      </p>
+    </div>
+  </div>
+
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>
