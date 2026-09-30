@@ -1,0 +1,1432 @@
+:root {
+  --hud-color: #d9dee3;
+  --hud-dim: rgba(217, 222, 227, 0.55);
+  --hud-accent: #b3413b;
+  --hud-warn: #e0c34a;
+  --hud-bg: rgba(10, 12, 14, 0.55);
+  --hud-border: rgba(217, 222, 227, 0.25);
+  --font-hud: "Courier New", Courier, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #000;
+  font-family: var(--font-hud);
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+#scene {
+  position: fixed;
+  inset: 0;
+  display: block;
+  outline: none;
+}
+
+/* ============ HUD ============ */
+#hud {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 10;
+}
+
+.hidden {
+  display: none !important;
+}
+
+/* Cutscene letterbox. The bars slide in; the dialogue box moves up so it
+   sits fully above the bottom bar instead of being covered by it. */
+:root {
+  --letterbox: 11vh;
+}
+#letterbox .bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 0;
+  background: #000;
+  transition: height 0.45s ease;
+}
+#letterbox .bar.top {
+  top: 0;
+}
+#letterbox .bar.bottom {
+  bottom: 0;
+}
+body.cinematic #letterbox .bar {
+  height: var(--letterbox);
+}
+#crosshair,
+#interact-prompt,
+#objective-banner,
+#flashlight-indicator,
+#stealth-meter,
+#combat-hud {
+  transition: opacity 0.3s ease;
+}
+body.cinematic #crosshair,
+body.cinematic #interact-prompt,
+body.cinematic #objective-banner,
+body.cinematic #flashlight-indicator,
+body.cinematic #stealth-meter,
+body.cinematic #combat-hud {
+  opacity: 0;
+}
+
+/* Crosshair */
+#crosshair {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 18px;
+  height: 18px;
+  transform: translate(-50%, -50%);
+  mix-blend-mode: difference;
+}
+#crosshair span {
+  position: absolute;
+  background: #fff;
+}
+#crosshair span:first-child {
+  top: 50%;
+  left: 0;
+  width: 100%;
+  height: 2px;
+  transform: translateY(-50%);
+}
+#crosshair span:last-child {
+  left: 50%;
+  top: 0;
+  width: 2px;
+  height: 100%;
+  transform: translateX(-50%);
+}
+
+/* Objective banner */
+#objective-banner {
+  position: absolute;
+  top: 22px;
+  left: 22px;
+  max-width: 360px;
+  padding: 10px 16px;
+  background: var(--hud-bg);
+  border-left: 3px solid var(--hud-accent);
+  color: var(--hud-color);
+  letter-spacing: 0.5px;
+  backdrop-filter: blur(2px);
+}
+#objective-label {
+  font-size: 11px;
+  color: var(--hud-warn);
+  letter-spacing: 2px;
+  margin-bottom: 4px;
+  opacity: 0.85;
+}
+#objective-text {
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+/* Interact prompt */
+#interact-prompt {
+  position: absolute;
+  top: calc(50% + 56px); /* just under the crosshair, clear of the dialogue box */
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  background: var(--hud-bg);
+  border: 1px solid var(--hud-border);
+  border-radius: 3px;
+  color: var(--hud-color);
+  font-size: 13px;
+}
+#interact-prompt .key {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--hud-color);
+  border-radius: 3px;
+  font-weight: bold;
+  font-size: 12px;
+}
+
+/* Stealth meter */
+#stealth-meter {
+  position: absolute;
+  top: 24px;
+  right: 24px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--hud-color);
+}
+#stealth-icon {
+  font-size: 20px;
+  color: var(--hud-warn);
+  text-shadow: 0 0 6px rgba(224, 195, 74, 0.6);
+}
+#stealth-bar-track {
+  width: 110px;
+  height: 8px;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid var(--hud-border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+#stealth-bar-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, var(--hud-warn), var(--hud-accent));
+  transition: width 0.15s linear;
+}
+
+/* Flashlight indicator */
+#flashlight-indicator {
+  position: absolute;
+  top: 62px;
+  right: 24px;
+  font-size: 11px;
+  letter-spacing: 1.5px;
+  color: var(--hud-dim);
+}
+#flashlight-state {
+  color: var(--hud-color);
+  font-weight: bold;
+}
+
+/* Dialogue / subtitle box */
+#dialogue-box {
+  position: absolute;
+  bottom: 8%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(560px, 80vw);
+  padding: 14px 20px;
+  background: rgba(6, 7, 9, 0.72);
+  border: 1px solid var(--hud-border);
+  border-radius: 4px;
+  color: var(--hud-color);
+  text-align: center;
+  transition: bottom 0.45s ease;
+}
+body.cinematic #dialogue-box {
+  bottom: calc(var(--letterbox) + 14px);
+}
+
+/* ============ Chapter 2 combat HUD ============ */
+#combat-hud {
+  position: absolute;
+  inset: 0;
+}
+.ch-vignette {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  background: radial-gradient(ellipse at center, rgba(0, 0, 0, 0) 45%, rgba(170, 10, 0, 0.55) 100%);
+}
+.ch-hitmarker {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 26px;
+  height: 26px;
+  transform: translate(-50%, -50%) rotate(45deg);
+  opacity: 0;
+}
+.ch-hitmarker.show {
+  opacity: 1;
+}
+.ch-hitmarker i {
+  position: absolute;
+  background: #fff;
+}
+.ch-hitmarker i:nth-child(1) { left: 12px; top: 0; width: 2px; height: 8px; }
+.ch-hitmarker i:nth-child(2) { left: 12px; bottom: 0; width: 2px; height: 8px; }
+.ch-hitmarker i:nth-child(3) { top: 12px; left: 0; width: 8px; height: 2px; }
+.ch-hitmarker i:nth-child(4) { top: 12px; right: 0; width: 8px; height: 2px; }
+.ch-hitmarker.head i,
+.ch-hitmarker.kill i {
+  background: #ff4a3a;
+}
+.ch-hitmarker.kill {
+  width: 34px;
+  height: 34px;
+}
+.ch-hitmarker.kill i:nth-child(1),
+.ch-hitmarker.kill i:nth-child(2) { left: 16px; height: 11px; }
+.ch-hitmarker.kill i:nth-child(3),
+.ch-hitmarker.kill i:nth-child(4) { top: 16px; width: 11px; }
+.ch-hitmarker.armor i {
+  background: #9fb4c0;
+}
+.ch-boss {
+  position: absolute;
+  top: 22px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(520px, 62vw);
+  text-align: center;
+  color: var(--hud-color);
+}
+/* Narrow windows: the objective panel fills the top, so the boss bar sits above the subtitles. */
+@media (max-width: 1000px) {
+  .ch-boss {
+    top: auto;
+    bottom: calc(24% + 46px); /* clear of the toast below and the [E] prompt above */
+  }
+}
+.ch-boss-name {
+  font-size: 12px;
+  letter-spacing: 5px;
+  color: #ff6a5a;
+  margin-bottom: 6px;
+  text-shadow: 0 0 8px rgba(255, 60, 40, 0.6);
+}
+.ch-boss-track {
+  position: relative;
+  height: 12px;
+  background: rgba(20, 4, 4, 0.75);
+  border: 1px solid rgba(255, 90, 70, 0.6);
+}
+.ch-boss-fill {
+  height: 100%;
+  width: 100%;
+  background: linear-gradient(90deg, #8a1208, #ff3a2a);
+  transition: width 0.2s linear;
+}
+.ch-boss-track span {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: rgba(0, 0, 0, 0.8);
+}
+/* Phase 2: the pillar the Titan carries as a shield (grey steel, going orange-hot). */
+.ch-pillar {
+  margin: 8px auto 0;
+  width: 70%;
+}
+.ch-pillar-name {
+  font-size: 10px;
+  letter-spacing: 4px;
+  color: #c9d2d8;
+  margin-bottom: 4px;
+}
+.ch-pillar-track {
+  height: 8px;
+  background: rgba(10, 12, 14, 0.75);
+  border: 1px solid rgba(201, 210, 216, 0.55);
+}
+.ch-pillar-fill {
+  height: 100%;
+  width: 100%;
+  background: linear-gradient(90deg, #d8792a, #9aa6ae);
+  transition: width 0.12s linear;
+}
+.ch-download {
+  position: absolute;
+  top: 84px;
+  right: 24px;
+  font-size: 11px;
+  letter-spacing: 2px;
+  color: var(--hud-dim);
+}
+.ch-download b {
+  color: #00e5ff;
+}
+.ch-health {
+  position: absolute;
+  left: 24px;
+  bottom: 26px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--hud-color);
+  font-size: 12px;
+  letter-spacing: 2px;
+}
+.ch-health-track {
+  width: 200px;
+  height: 10px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--hud-border);
+}
+.ch-health-fill {
+  height: 100%;
+  width: 100%;
+  background: linear-gradient(90deg, #3fa870, #7fe0a0);
+  transition: width 0.15s linear;
+}
+.ch-ammo {
+  position: absolute;
+  right: 28px;
+  bottom: 22px;
+  color: var(--hud-color);
+  text-align: right;
+}
+.ch-ammo b {
+  font-size: 34px;
+}
+.ch-ammo span {
+  margin-left: 6px;
+  font-size: 16px;
+  color: var(--hud-dim);
+}
+.ch-reload {
+  margin-top: 4px;
+  margin-left: auto;
+  width: 110px;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.12);
+}
+.ch-reload div {
+  height: 100%;
+  width: 0;
+  background: var(--hud-warn);
+}
+.ch-held {
+  position: absolute;
+  right: 28px;
+  bottom: 86px;
+  padding: 5px 10px;
+  font-size: 11px;
+  letter-spacing: 2px;
+  color: #9fe8ff;
+  border: 1px solid rgba(159, 232, 255, 0.4);
+  background: var(--hud-bg);
+}
+.ch-held span {
+  margin-left: 8px;
+  color: var(--hud-color);
+}
+/* Chapter 3's gym: the survival timer, the big attack warnings, callouts, the guard */
+.ch-timer {
+  position: absolute;
+  top: 70px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 20px;
+  letter-spacing: 5px;
+  color: #ffd9a0;
+  text-shadow: 0 0 10px rgba(255, 140, 60, 0.6);
+}
+@media (max-width: 1000px) {
+  .ch-timer {
+    top: auto;
+    bottom: calc(24% + 100px);
+  }
+}
+.ch-warn {
+  position: absolute;
+  top: 31%;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 8px 20px;
+  font-size: 18px;
+  letter-spacing: 3px;
+  white-space: nowrap;
+  border: 1px solid currentColor;
+  background: rgba(10, 4, 2, 0.6);
+  animation: ch-warn-pulse 0.35s ease-in-out infinite alternate;
+}
+.ch-warn.duck {
+  color: #ffb13a;
+}
+.ch-warn.cover {
+  color: #ff4a3a;
+}
+.ch-warn.danger {
+  color: #ff6a4a;
+}
+@keyframes ch-warn-pulse {
+  from { opacity: 0.65; }
+  to { opacity: 1; }
+}
+.ch-callout {
+  position: absolute;
+  top: calc(50% - 64px);
+  left: 50%;
+  transform: translateX(-50%) scale(0.8);
+  font-size: 16px;
+  font-weight: bold;
+  letter-spacing: 3px;
+  color: #fff;
+  opacity: 0;
+  transition: opacity 0.1s ease, transform 0.15s ease;
+  text-shadow: 0 0 8px rgba(0, 0, 0, 0.9);
+}
+.ch-callout.show {
+  opacity: 1;
+  transform: translateX(-50%) scale(1);
+}
+.ch-callout.counter {
+  color: #ffd21f;
+}
+.ch-callout.block {
+  color: #9fb4c0;
+}
+.ch-guard {
+  position: absolute;
+  left: 24px;
+  bottom: 52px;
+  padding: 3px 10px;
+  font-size: 11px;
+  letter-spacing: 3px;
+  color: #9fe8ff;
+  border: 1px solid rgba(159, 232, 255, 0.5);
+  background: var(--hud-bg);
+}
+
+/* ============ The end credits ============ */
+#credits {
+  position: fixed;
+  inset: 0;
+  z-index: 16;
+  pointer-events: none;
+  font-family: var(--font-hud);
+  color: #d9dee3;
+  overflow: hidden;
+}
+.credits-shade {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  width: 46%;
+  background: linear-gradient(to right, rgba(3, 4, 6, 0) 0%, rgba(3, 4, 6, 0.82) 30%, rgba(3, 4, 6, 0.92) 100%);
+}
+.credits-roll {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 4%;
+  width: 36%;
+  overflow: hidden;
+}
+.credits-inner {
+  text-align: center;
+  will-change: transform;
+}
+.cr-title {
+  font-size: 34px;
+  letter-spacing: 9px;
+  color: #b3413b;
+  margin-bottom: 6px;
+}
+.cr-sub {
+  font-size: 14px;
+  letter-spacing: 3px;
+  font-style: italic;
+  color: rgba(217, 222, 227, 0.75);
+  margin: 4px 0;
+}
+.cr-head {
+  font-size: 12px;
+  letter-spacing: 5px;
+  color: #e0c34a;
+  margin: 10px 0 12px;
+}
+.cr-role {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  font-size: 14px;
+  margin: 7px 6%;
+}
+.cr-role span {
+  color: rgba(217, 222, 227, 0.6);
+}
+.cr-role b {
+  font-weight: normal;
+  text-align: right;
+}
+.cr-line {
+  font-size: 14px;
+  margin: 7px 0;
+}
+.cr-gap {
+  height: 56px;
+}
+.credits-bubble {
+  position: absolute;
+  transform: translate(-50%, -100%);
+  padding: 10px 16px;
+  background: #fff;
+  color: #1a1a1a;
+  font-family: "Comic Sans MS", "Chalkboard SE", cursive;
+  font-size: 20px;
+  font-weight: bold;
+  border-radius: 18px;
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.credits-bubble::after {
+  content: '';
+  position: absolute;
+  left: 30%;
+  bottom: -12px;
+  border: 8px solid transparent;
+  border-top: 12px solid #fff;
+}
+.credits-bubble.show {
+  opacity: 1;
+}
+.credits-end {
+  position: absolute;
+  right: 4%;
+  width: 36%;
+  top: 36%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  text-align: center;
+  opacity: 0;
+  transition: opacity 2s ease;
+}
+.credits-end.show {
+  opacity: 1;
+  pointer-events: all;
+}
+.ce-title {
+  font-size: 44px;
+  letter-spacing: 14px;
+  color: #b3413b;
+}
+.ce-hard {
+  font-size: 16px;
+  letter-spacing: 5px;
+  color: #ffd21f;
+  text-shadow: 0 0 12px rgba(255, 210, 31, 0.5);
+}
+.ce-sub {
+  font-size: 12px;
+  letter-spacing: 2px;
+  color: rgba(217, 222, 227, 0.6);
+}
+.credits-menu {
+  margin-top: 18px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+  letter-spacing: 3px;
+  padding: 10px 26px;
+  background: transparent;
+  border: 1px solid #b3413b;
+  color: #d9dee3;
+}
+/* Always there during the credits: back to the menu (Hard Mode's already unlocked). */
+.credits-skip {
+  position: absolute;
+  left: 24px;
+  bottom: 24px;
+  pointer-events: all;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+  letter-spacing: 2px;
+  padding: 9px 18px;
+  background: rgba(10, 8, 4, 0.7);
+  border: 1px solid #ffd21f;
+  color: #ffd21f;
+}
+.credits-skip:hover,
+.credits-menu:hover {
+  background: #b3413b;
+  color: #0a0a0a;
+}
+/* ============ Chapter 3: grabbed, hiding, caught ============ */
+#ch3-mash {
+  position: absolute;
+  top: 60%;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 12px 22px;
+  background: rgba(40, 4, 4, 0.82);
+  border: 1px solid #ff4a3a;
+  color: #ffd9d4;
+  font-size: 15px;
+  letter-spacing: 2px;
+  text-align: center;
+  white-space: nowrap;
+  animation: ch3-shake 0.12s infinite;
+}
+#ch3-mash .bar {
+  margin-top: 8px;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.12);
+}
+#ch3-mash .bar div {
+  height: 100%;
+  width: 0;
+  background: #ff4a3a;
+  transition: width 0.08s linear;
+}
+@keyframes ch3-shake {
+  0% { transform: translate(-50%, 0); }
+  25% { transform: translate(calc(-50% + 2px), -1px); }
+  50% { transform: translate(calc(-50% - 2px), 1px); }
+  75% { transform: translate(calc(-50% + 1px), 1px); }
+  100% { transform: translate(-50%, 0); }
+}
+.ch3-warning {
+  position: absolute;
+  top: 84px;
+  right: 24px;
+  font-size: 11px;
+  letter-spacing: 1px;
+  color: #e0584f;
+  text-shadow: 0 0 6px rgba(224, 88, 79, 0.5);
+}
+/* Peeking out of a hiding spot: a slit under a dumpster lid, or through shed door slats. */
+#ch3-hide {
+  position: fixed;
+  inset: 0;
+  z-index: 9;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.35s ease;
+}
+#ch3-hide.show {
+  opacity: 1;
+}
+#ch3-hide.lid {
+  background:
+    radial-gradient(ellipse 62% 30% at 50% 52%, rgba(0, 0, 0, 0) 0%, rgba(0, 0, 0, 0.4) 60%, rgba(0, 0, 0, 0.96) 100%),
+    linear-gradient(to bottom, #000 0%, #000 37%, rgba(0, 0, 0, 0.3) 44%, rgba(0, 0, 0, 0) 50%, rgba(0, 0, 0, 0.3) 58%, #000 66%, #000 100%);
+}
+#ch3-hide.door {
+  background:
+    radial-gradient(ellipse 48% 48% at 50% 50%, rgba(0, 0, 0, 0) 25%, rgba(0, 0, 0, 0.92) 100%),
+    repeating-linear-gradient(90deg, rgba(0, 0, 0, 0.97) 0px, rgba(0, 0, 0, 0.97) 64px, rgba(0, 0, 0, 0.2) 76px, rgba(0, 0, 0, 0.2) 92px, rgba(0, 0, 0, 0.97) 104px);
+}
+/* Inside a locker: looking out through the vent louvers. */
+#ch3-hide.louver {
+  background:
+    radial-gradient(ellipse 58% 46% at 50% 50%, rgba(0, 0, 0, 0) 30%, rgba(0, 0, 0, 0.94) 100%),
+    repeating-linear-gradient(180deg, rgba(0, 0, 0, 0.96) 0px, rgba(0, 0, 0, 0.96) 22px, rgba(0, 0, 0, 0.25) 28px, rgba(0, 0, 0, 0.1) 36px, rgba(0, 0, 0, 0.25) 40px, rgba(0, 0, 0, 0.96) 46px),
+    linear-gradient(to bottom, #000 0%, #000 22%, rgba(0, 0, 0, 0) 30%, rgba(0, 0, 0, 0) 70%, #000 78%, #000 100%);
+}
+.ch3-hide-label {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 14%;
+  text-align: center;
+  font-size: 12px;
+  letter-spacing: 4px;
+  color: rgba(127, 191, 127, 0.85);
+}
+#ch3-caught {
+  position: fixed;
+  inset: 0;
+  z-index: 17;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.4s ease;
+  font-family: var(--font-hud);
+}
+#ch3-caught.show {
+  opacity: 1;
+}
+#ch3-caught b {
+  font-size: 52px;
+  letter-spacing: 14px;
+  color: #d8352a;
+  text-shadow: 0 0 18px rgba(216, 53, 42, 0.6);
+}
+#ch3-caught span {
+  font-size: 13px;
+  letter-spacing: 4px;
+  color: rgba(217, 222, 227, 0.65);
+}
+body.cinematic #ch3-mash,
+body.cinematic .ch3-warning {
+  opacity: 0;
+}
+/* Walking into the edge of the grounds. */
+#ch3-bounds {
+  position: absolute;
+  top: 26%;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 8px 18px;
+  background: rgba(40, 4, 4, 0.7);
+  border: 1px solid rgba(255, 74, 58, 0.8);
+  color: #ffd9d4;
+  font-size: 14px;
+  letter-spacing: 2px;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.25s ease;
+}
+#ch3-bounds.show {
+  opacity: 1;
+}
+body.cinematic #ch3-bounds {
+  opacity: 0;
+}
+
+#dialogue-speaker {
+  font-size: 12px;
+  letter-spacing: 2px;
+  color: var(--hud-warn);
+  margin-bottom: 6px;
+  text-transform: uppercase;
+}
+#dialogue-text {
+  font-size: 15px;
+  line-height: 1.4;
+}
+
+/* Message toast (quick contextual feedback) */
+#message-toast {
+  position: absolute;
+  bottom: 24%;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 8px 16px;
+  background: var(--hud-bg);
+  border: 1px solid var(--hud-border);
+  border-radius: 3px;
+  color: var(--hud-color);
+  font-size: 13px;
+  opacity: 0;
+  transition: opacity 0.25s ease;
+}
+#message-toast.visible {
+  opacity: 1;
+}
+
+/* ============ Start overlay ============ */
+#start-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(ellipse at center, #1a1d22 0%, #050607 100%);
+}
+#start-overlay.hidden {
+  display: none !important;
+}
+#start-panel {
+  text-align: center;
+  color: var(--hud-color);
+  padding: 40px 56px;
+  border: 1px solid var(--hud-border);
+  background: rgba(255, 255, 255, 0.02);
+}
+#start-panel h1 {
+  margin: 0 0 26px;
+  font-size: 32px;
+  letter-spacing: 8px;
+  color: var(--hud-accent);
+}
+#start-panel h2 {
+  margin: -16px 0 22px;
+  font-size: 16px;
+  font-weight: normal;
+  letter-spacing: 4px;
+  color: var(--hud-dim);
+}
+.controls-hint {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  justify-content: center;
+  font-size: 12px;
+  color: var(--hud-dim);
+  margin: 26px auto 0;
+  max-width: 420px;
+}
+.controls-hint b {
+  color: var(--hud-color);
+}
+
+/* Title / chapter select / pause menus */
+.menu {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+.menu-btn {
+  pointer-events: all;
+  cursor: pointer;
+  min-width: 260px;
+  font-family: var(--font-hud);
+  font-size: 14px;
+  letter-spacing: 2px;
+  padding: 12px 28px;
+  background: transparent;
+  border: 1px solid var(--hud-accent);
+  color: var(--hud-color);
+  transition: background 0.2s ease, color 0.2s ease;
+}
+.menu-btn:hover {
+  background: var(--hud-accent);
+  color: #0a0a0a;
+}
+.menu-secondary {
+  border-color: var(--hud-border);
+  color: var(--hud-dim);
+}
+.menu-secondary:hover {
+  background: rgba(217, 222, 227, 0.12);
+  color: var(--hud-color);
+}
+.hard-toggle.hard-on {
+  border-color: #ffd21f;
+  color: #ffd21f;
+  text-shadow: 0 0 8px rgba(255, 210, 31, 0.45);
+}
+.chapter-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+.chapter-num {
+  font-size: 11px;
+  letter-spacing: 4px;
+  opacity: 0.7;
+}
+.chapter-name {
+  font-size: 15px;
+  letter-spacing: 2px;
+}
+.chapter-note {
+  font-size: 10px;
+  letter-spacing: 3px;
+  opacity: 0.6;
+}
+
+/* Paused mid-game: the frozen frame stays visible, dimmed and blurred behind a dark modal. */
+#start-overlay.paused {
+  background: rgba(3, 4, 6, 0.7);
+  -webkit-backdrop-filter: blur(4px) saturate(0.7);
+  backdrop-filter: blur(4px) saturate(0.7);
+}
+#start-overlay.paused #start-panel {
+  background: rgba(9, 11, 13, 0.94);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.65);
+  animation: pause-in 0.18s ease-out;
+}
+#start-overlay.paused .controls-hint {
+  display: none; /* (the settings take its place) */
+}
+@keyframes pause-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.985); }
+  to { opacity: 1; transform: none; }
+}
+
+/* Settings: sliders + toggles (in the pause menu, or its own page off the title screen) */
+.settings-panel {
+  width: 100%;
+  max-width: 420px;
+  min-width: 300px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px 18px;
+  margin: 6px 0;
+  border: 1px solid var(--hud-border);
+  background: rgba(255, 255, 255, 0.02);
+  text-align: left;
+}
+.setting-row {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.setting-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 11px;
+  letter-spacing: 3px;
+  color: var(--hud-dim);
+}
+.setting-head output {
+  color: var(--hud-color);
+  letter-spacing: 1px;
+}
+.settings-panel input[type='range'] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 18px;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+  accent-color: var(--hud-accent);
+}
+.settings-panel input[type='range']::-webkit-slider-runnable-track {
+  height: 4px;
+  background: rgba(217, 222, 227, 0.18);
+  border: 1px solid var(--hud-border);
+}
+.settings-panel input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: -6px;
+  background: var(--hud-accent);
+  border: 1px solid #0a0a0a;
+  box-shadow: 0 0 8px rgba(179, 65, 59, 0.6);
+}
+.settings-panel input[type='range']::-moz-range-track {
+  height: 4px;
+  background: rgba(217, 222, 227, 0.18);
+  border: 1px solid var(--hud-border);
+}
+.settings-panel input[type='range']::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 0;
+  background: var(--hud-accent);
+  border: 1px solid #0a0a0a;
+}
+.settings-panel input[type='range']:focus-visible {
+  outline: 1px solid var(--hud-accent);
+  outline-offset: 3px;
+}
+.setting-toggles {
+  display: flex;
+  gap: 8px;
+}
+.setting-toggles .menu-btn {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  letter-spacing: 1px;
+  padding: 10px 8px;
+}
+.setting-toggle.setting-on {
+  border-color: var(--hud-accent);
+  color: var(--hud-color);
+}
+
+/* ============ Post-game: Hall Legend, the Secret Chapter card, Sandbox ============ */
+#legend-badge {
+  margin: -14px 0 18px;
+  display: inline-block;
+  padding: 4px 16px;
+  font-size: 12px;
+  letter-spacing: 6px;
+  color: #ffd700;
+  border: 1px solid rgba(255, 215, 0, 0.6);
+  border-radius: 2px;
+  text-shadow: 0 0 10px rgba(255, 215, 0, 0.6);
+  background: rgba(255, 215, 0, 0.06);
+}
+.sandbox-toggle.sandbox-on {
+  border-color: #6fe8ff;
+  color: #6fe8ff;
+  text-shadow: 0 0 8px rgba(111, 232, 255, 0.45);
+}
+/* "Secret Chapter: Overtime": dim and locked until you beat the game; a shimmering gold border once Part 2 is unlocked too. */
+.secret-btn {
+  position: relative;
+  overflow: hidden;
+  border-color: rgba(224, 195, 74, 0.55);
+}
+.secret-btn.locked {
+  opacity: 0.45;
+  cursor: not-allowed;
+  border-style: dashed;
+  border-color: var(--hud-border);
+}
+.secret-btn.locked:hover {
+  background: transparent;
+  color: var(--hud-color);
+}
+.chapter-btn.gold {
+  position: relative;
+  overflow: hidden;
+  border: 2px solid #ffd700;
+  box-shadow: 0 0 15px #ffd700, inset 0 0 10px #ffd700;
+  color: #ffe98a;
+  animation: gold-shimmer 2.6s ease-in-out infinite;
+}
+.chapter-btn.gold::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 40%;
+  left: -60%;
+  background: linear-gradient(100deg, transparent, rgba(255, 244, 180, 0.55), transparent);
+  transform: skewX(-18deg);
+  animation: gold-sweep 3.2s ease-in-out infinite;
+  pointer-events: none;
+}
+.chapter-btn.gold:hover {
+  background: rgba(255, 215, 0, 0.18);
+  color: #fff6c8;
+}
+@keyframes gold-shimmer {
+  0%, 100% {
+    border-color: #ffd700;
+    box-shadow: 0 0 15px #ffd700, inset 0 0 10px #ffd700;
+  }
+  50% {
+    border-color: #fff2a0;
+    box-shadow: 0 0 26px #ffe14a, inset 0 0 16px #ffe14a;
+  }
+}
+@keyframes gold-sweep {
+  0% { left: -60%; }
+  55%, 100% { left: 130%; }
+}
+
+/* ============ Achievements: the toast and the gallery ============ */
+#ach-toasts {
+  position: fixed;
+  top: 108px;
+  right: 22px;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+  pointer-events: none;
+}
+.ach-toast {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: min(390px, calc(100vw - 44px));
+  padding: 12px 18px 12px 12px;
+  color: #f4f6f8;
+  font-family: var(--font-hud);
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.05));
+  -webkit-backdrop-filter: blur(16px) saturate(1.6);
+  backdrop-filter: blur(16px) saturate(1.6);
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  border-radius: 16px;
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 0 28px rgba(255, 210, 70, 0.2);
+  transform: translateX(125%);
+  opacity: 0;
+  transition: transform 0.6s cubic-bezier(0.22, 1.15, 0.36, 1), opacity 0.45s ease;
+}
+.ach-toast.show {
+  transform: translateX(0);
+  opacity: 1;
+}
+.ach-toast-icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 54px;
+  height: 54px;
+  font-size: 28px;
+  border-radius: 14px;
+  background: radial-gradient(circle at 30% 25%, rgba(255, 224, 120, 0.55), rgba(255, 170, 40, 0.12));
+  border: 1px solid rgba(255, 210, 90, 0.55);
+  box-shadow: 0 0 16px rgba(255, 200, 70, 0.3);
+}
+.ach-toast-kicker {
+  font-size: 9px;
+  letter-spacing: 3px;
+  color: #ffd75a;
+  margin-bottom: 3px;
+}
+.ach-toast-title {
+  font-size: 16px;
+  font-weight: bold;
+  letter-spacing: 1px;
+}
+.ach-toast-desc {
+  margin-top: 3px;
+  font-size: 11px;
+  line-height: 1.35;
+  color: rgba(244, 246, 248, 0.72);
+}
+#ach-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(2, 3, 5, 0.88);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+}
+.ach-panel {
+  position: relative;
+  width: min(780px, 94vw);
+  max-height: 88vh;
+  overflow-y: auto;
+  padding: 26px 30px 30px;
+  color: var(--hud-color);
+  font-family: var(--font-hud);
+  background: linear-gradient(180deg, #15181c, #0a0c0e);
+  border: 1px solid var(--hud-border);
+  border-radius: 6px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.7);
+  scrollbar-width: thin;
+  scrollbar-color: #3a4048 transparent;
+}
+.ach-panel h2 {
+  margin: 0 0 6px;
+  font-size: 22px;
+  letter-spacing: 8px;
+  color: var(--hud-accent);
+}
+.ach-close {
+  position: absolute;
+  top: 12px;
+  right: 16px;
+  width: 34px;
+  height: 34px;
+  cursor: pointer;
+  font-size: 24px;
+  line-height: 1;
+  color: var(--hud-dim);
+  background: transparent;
+  border: 1px solid var(--hud-border);
+  border-radius: 4px;
+}
+.ach-close:hover {
+  color: #0a0a0a;
+  background: var(--hud-accent);
+}
+.ach-count {
+  font-size: 13px;
+  letter-spacing: 3px;
+  color: #ffd75a;
+}
+.ach-bar {
+  height: 6px;
+  margin: 10px 0 18px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.ach-bar div {
+  height: 100%;
+  width: 0;
+  background: linear-gradient(90deg, #b3413b, #ffd75a);
+  transition: width 0.4s ease;
+}
+.ach-group {
+  margin: 20px 0 8px;
+  font-size: 11px;
+  letter-spacing: 4px;
+  color: var(--hud-warn);
+  border-bottom: 1px solid var(--hud-border);
+  padding-bottom: 6px;
+}
+.ach-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 8px 0;
+  padding: 10px 14px;
+  border: 1px solid rgba(217, 222, 227, 0.14);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.025);
+  opacity: 0.55;
+}
+.ach-card.on {
+  opacity: 1;
+  border-color: rgba(255, 210, 90, 0.5);
+  background: linear-gradient(90deg, rgba(255, 210, 90, 0.1), rgba(255, 255, 255, 0.02));
+}
+.ach-card.secret {
+  border-style: dashed;
+}
+.ach-card-icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  font-size: 24px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.05);
+  filter: grayscale(1);
+}
+.ach-card.on .ach-card-icon {
+  filter: none;
+  background: radial-gradient(circle at 30% 25%, rgba(255, 224, 120, 0.4), rgba(255, 170, 40, 0.08));
+}
+.ach-card-text {
+  flex: 1;
+  min-width: 0;
+}
+.ach-card-title {
+  font-size: 14px;
+  font-weight: bold;
+  letter-spacing: 1px;
+}
+.ach-card-desc {
+  margin-top: 3px;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--hud-dim);
+}
+.ach-card-state {
+  flex: none;
+  font-size: 16px;
+  color: #ffd75a;
+}
+
+/* ============ Secret Chapter: the incinerator timer, hacking, getting caught ============ */
+#sc-timer {
+  position: absolute;
+  top: 74px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 8px 22px;
+  font-size: clamp(14px, 3.3vw, 26px);
+  letter-spacing: clamp(2px, 0.9vw, 6px);
+  white-space: nowrap;
+  color: #ff5a3a;
+  background: rgba(30, 4, 2, 0.75);
+  border: 1px solid #ff3a2a;
+  text-shadow: 0 0 12px rgba(255, 60, 30, 0.7);
+  animation: ch-warn-pulse 0.5s ease-in-out infinite alternate;
+}
+#sc-hack {
+  position: absolute;
+  top: calc(50% + 100px);
+  left: 50%;
+  transform: translateX(-50%);
+  min-width: 260px;
+  padding: 10px 18px;
+  text-align: center;
+  font-size: 12px;
+  letter-spacing: 3px;
+  color: #7fe8ff;
+  background: rgba(4, 20, 26, 0.8);
+  border: 1px solid #3ad8ff;
+}
+#sc-hack .bar {
+  margin-top: 8px;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.12);
+}
+#sc-hack .bar div {
+  height: 100%;
+  width: 0;
+  background: #3ad8ff;
+}
+#sc-caught {
+  position: fixed;
+  inset: 0;
+  z-index: 17;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.4s ease;
+  font-family: var(--font-hud);
+}
+#sc-caught.show {
+  opacity: 1;
+}
+#sc-caught b {
+  font-size: 52px;
+  letter-spacing: 14px;
+  color: #d8352a;
+  text-shadow: 0 0 18px rgba(216, 53, 42, 0.6);
+}
+#sc-caught span {
+  font-size: 13px;
+  letter-spacing: 4px;
+  color: rgba(217, 222, 227, 0.65);
+}
+body.cinematic #sc-hack {
+  opacity: 0;
+}
+
+/* Secret Chapter, Part 1: the rocks you're carrying (under the flashlight readout). */
+#sc-rocks {
+  position: absolute;
+  top: 82px;
+  right: 24px;
+  font-size: 11px;
+  letter-spacing: 1.5px;
+  color: var(--hud-dim);
+  transition: opacity 0.3s ease;
+}
+#sc-rocks b {
+  color: var(--hud-color);
+}
+#sc-rocks span {
+  margin-left: 6px;
+  opacity: 0.7;
+}
+#sc-rocks.empty b {
+  color: #e0584f;
+}
+#sc-rocks.bump {
+  animation: sc-rocks-bump 0.35s ease-out;
+}
+@keyframes sc-rocks-bump {
+  from { color: #e0c34a; transform: translateX(-4px); }
+  to { color: var(--hud-dim); transform: none; }
+}
+body.cinematic #sc-rocks {
+  opacity: 0;
+}
+
+/* Secret Chapter: the quiet "you remember what Ben said" reminder (bottom of the screen, static). */
+#sc-hint {
+  position: absolute;
+  left: 50%;
+  bottom: 96px;
+  transform: translateX(-50%);
+  width: min(560px, 86vw);
+  padding: 9px 16px;
+  text-align: center;
+  background: rgba(8, 12, 16, 0.72);
+  border: 1px solid rgba(160, 200, 220, 0.35);
+  color: #cfd8de;
+  font-size: 13px;
+  line-height: 1.45;
+  pointer-events: none;
+}
+#sc-hint b {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 10px;
+  letter-spacing: 3px;
+  font-weight: normal;
+  color: #7fb4cc;
+}
+#sc-hint span {
+  font-style: italic;
+}
+body.cinematic #sc-hint {
+  display: none;
+}
