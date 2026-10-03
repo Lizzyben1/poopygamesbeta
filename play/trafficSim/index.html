@@ -1,0 +1,1910 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Urban Traffic Micro-Simulation</title>
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#0b0e14;font:12px/1.45 ui-monospace,Consolas,monospace;color:#dfe6ee}
+  canvas{display:block}
+  .panel{position:fixed;background:rgba(12,16,24,.82);border:1px solid #2a3442;border-radius:6px;padding:8px 10px;pointer-events:none;backdrop-filter:blur(4px)}
+  #stats{left:10px;top:10px;min-width:210px}
+  #insp{left:10px;top:150px;min-width:210px;display:none}
+  #help{left:10px;bottom:10px;max-width:420px;color:#9fb0c3}
+  #nn{right:330px;bottom:10px;width:300px}
+  #nn canvas{margin-top:5px;border:1px solid #2a3442;border-radius:3px}
+  #bench{left:50%;top:104px;transform:translateX(-50%);display:none;pointer-events:auto;cursor:pointer;z-index:5}
+  #bench table{border-collapse:collapse;margin-top:6px}#bench td,#bench th{padding:2px 12px 2px 0;text-align:left;font-weight:400}#bench th{color:#7fd4ff}
+  #msg{left:50%;top:14px;transform:translateX(-50%);font-size:15px;font-weight:700;color:#ffd24a;display:none;border-color:#a8741a}
+  .panel b{color:#7fd4ff;font-weight:600}
+  .k{color:#8fa1b5}.warn{color:#ff7a6b}.ok{color:#7be08a}
+  #err{position:fixed;left:0;right:0;bottom:0;background:#7a1010;color:#fff;padding:6px 10px;display:none;white-space:pre-wrap;z-index:99}
+</style>
+<script type="importmap">
+{"imports":{
+  "three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+  "lil-gui":"https://cdn.jsdelivr.net/npm/lil-gui@0.19.2/dist/lil-gui.esm.min.js"
+}}
+</script>
+</head>
+<body>
+<div id="stats" class="panel"></div>
+<div id="insp" class="panel"></div>
+<div id="msg" class="panel"></div>
+<div id="help" class="panel"></div>
+<div id="bench" class="panel" onclick="this.style.display='none'"></div>
+<div id="nn" class="panel"><div id="nnTxt"></div><canvas id="nnGraph" width="300" height="84"></canvas></div>
+<div id="err"></div>
+<script type="module">
+import * as THREE from 'three';
+import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
+import {mergeGeometries} from 'three/addons/utils/BufferGeometryUtils.js';
+import GUI from 'lil-gui';
+
+window.addEventListener('error',e=>{const d=document.getElementById('err');d.style.display='block';d.textContent='Runtime error: '+e.message+' @'+e.lineno;(window.SIM_ERRORS=window.SIM_ERRORS||[]).push(e.message+' @'+e.lineno);});
+
+/* ============================== PARAMETERS ============================== */
+const P={
+  gridX:4, gridY:3, lanesNS:2, lanesEW:2, control:'Mixed', sigMode:'8-phase dual ring', parkFrac:0.6,
+  carRate:10, maxCars:260, pedRate:40, maxPeds:140, speedLimit:50, doubleParked:3, dpEvery:5, dpMin:25, dpMax:60, dpLane:'Kerb lane', dpType:'Van',
+  aiMode:'Procedural (IDM)', headless:false, lod:true, target:102,
+  distMult:1, aggrMean:0.45, aggrSpread:0.25, jaywalk:0.5,
+  weather:'Clear', tod:13, cycleDay:false, dayLen:240,
+  fov:false, rays:false, paths:false, hitboxes:false, sigBars:true, audio:false,
+  pause:false, timeScale:1,
+};
+const LW=3.5, MED=1.5, STRIP=3, SWW=4, CWS=4.5, SP=120, POCK=32, GRAV=9.81, PR=90;
+const MAXV=1280, MAXP=420;
+const DIRS=[[0,-1],[1,0],[0,1],[-1,0]];           // 0=N 1=E 2=S 3=W  (x east, z south)
+const TI={L:0,S:1,R:2};
+const WX={Clear:{mu:.85,pr:1,ff:1,lat:1,vf:1,gf:1},Rain:{mu:.45,pr:.62,ff:.85,lat:1.5,vf:.85,gf:1.25},Snow:{mu:.20,pr:.5,ff:.72,lat:2,vf:.6,gf:1.7}};
+let W=WX.Clear;
+
+/* ============================== UTILITIES ============================== */
+const clamp=(x,a,b)=>x<a?a:x>b?b:x, lerp=(a,b,t)=>a+(b-a)*t, rr=(a,b)=>a+Math.random()*(b-a);
+const hyp=Math.hypot;
+function mulberry(a){return()=>{a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+function gauss(){return (Math.random()+Math.random()+Math.random()+Math.random()-2)/2*1.73;}   // ~N(0,1)
+
+/* ============================== RENDERER ============================== */
+const renderer=new THREE.WebGLRenderer({antialias:true,powerPreference:'high-performance'});
+renderer.setPixelRatio(Math.min(devicePixelRatio,1.5));
+renderer.setSize(innerWidth,innerHeight);
+document.body.appendChild(renderer.domElement);
+const scene=new THREE.Scene();
+scene.fog=new THREE.Fog(0x8ec5ff,200,1600);
+const camera=new THREE.PerspectiveCamera(55,innerWidth/innerHeight,0.3,4000);
+camera.position.set(120,170,220);
+const orbit=new OrbitControls(camera,renderer.domElement);
+orbit.maxPolarAngle=Math.PI*0.495; orbit.enableDamping=true; orbit.dampingFactor=0.12; orbit.minDistance=8; orbit.maxDistance=1800;
+const hemi=new THREE.HemisphereLight(0xcfe4ff,0x3a3a34,0.9); scene.add(hemi);
+const sun=new THREE.DirectionalLight(0xfff2dd,1.6); scene.add(sun);
+addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);});
+
+/* Instanced part pool: every agent part is one slot in an InstancedMesh (object pooling, 1 draw call per part type) */
+const BIG=new THREE.Sphere(new THREE.Vector3(),1e6);
+class Inst{
+  constructor(geo,mat,n,colored,parent=scene){
+    this.m=new THREE.InstancedMesh(geo,mat,n); this.n=n; this.a=this.m.instanceMatrix.array; this.a.fill(0);
+    for(let i=0;i<n;i++)this.a[i*16+15]=1;
+    this.m.instanceMatrix.setUsage(THREE.DynamicDrawUsage); this.m.frustumCulled=false; this.m.boundingSphere=BIG;
+    if(colored){this.m.instanceColor=new THREE.InstancedBufferAttribute(new Float32Array(n*3).fill(1),3);this.c=this.m.instanceColor.array;this.m.instanceColor.setUsage(THREE.DynamicDrawUsage);}
+    parent.add(this.m);
+  }
+  // local frame: +X forward (fx,fz), +Y up, +Z right (-fz,fx)
+  put(i,px,py,pz,fx,fz,sx,sy,sz){const a=this.a,o=i*16;a[o]=fx*sx;a[o+1]=0;a[o+2]=fz*sx;a[o+4]=0;a[o+5]=sy;a[o+6]=0;a[o+8]=-fz*sz;a[o+9]=0;a[o+10]=fx*sz;a[o+12]=px;a[o+13]=py;a[o+14]=pz;}
+  hide(i){const a=this.a,o=i*16;a[o]=a[o+2]=a[o+5]=a[o+8]=a[o+10]=0;a[o+12]=a[o+14]=0;a[o+13]=-50;}
+  col(i,r,g,b){const c=this.c,o=i*3;c[o]=r;c[o+1]=g;c[o+2]=b;}
+  done(){this.m.instanceMatrix.needsUpdate=true;if(this.c)this.m.instanceColor.needsUpdate=true;}
+}
+/* Flat vertex-coloured quad batch for roads / markings */
+class Batch{
+  constructor(){this.p=[];this.c=[];}
+  rect(cx,cz,fx,fz,hl,hw,y,col){               // centre, forward dir, half length, half width
+    const rx=-fz,rz=fx,ax=cx-fx*hl-rx*hw,az=cz-fz*hl-rz*hw,bx=cx-fx*hl+rx*hw,bz=cz-fz*hl+rz*hw,
+          ex=cx+fx*hl+rx*hw,ez=cz+fz*hl+rz*hw,dx=cx+fx*hl-rx*hw,dz=cz+fz*hl-rz*hw;
+    this.p.push(ax,y,az,bx,y,bz,ex,y,ez, ax,y,az,ex,y,ez,dx,y,dz);
+    for(let i=0;i<6;i++)this.c.push(col[0],col[1],col[2]);
+  }
+  box(x0,z0,x1,z1,y,col){this.rect((x0+x1)/2,(z0+z1)/2,1,0,(x1-x0)/2,(z1-z0)/2,y,col);}
+  mesh(mat){
+    const g=new THREE.BufferGeometry(),n=this.p.length/3,nm=new Float32Array(n*3);
+    for(let i=0;i<n;i++)nm[i*3+1]=1;
+    g.setAttribute('position',new THREE.Float32BufferAttribute(this.p,3));
+    g.setAttribute('color',new THREE.Float32BufferAttribute(this.c,3));
+    g.setAttribute('normal',new THREE.BufferAttribute(nm,3));
+    return new THREE.Mesh(g,mat);
+  }
+}
+/* Debug line buffer (raycasts, path nodes) */
+const DBG_MAX=6000;
+const dbgGeo=new THREE.BufferGeometry();
+const dbgPos=new Float32Array(DBG_MAX*6), dbgCol=new Float32Array(DBG_MAX*6);
+dbgGeo.setAttribute('position',new THREE.BufferAttribute(dbgPos,3).setUsage(THREE.DynamicDrawUsage));
+dbgGeo.setAttribute('color',new THREE.BufferAttribute(dbgCol,3).setUsage(THREE.DynamicDrawUsage));
+const dbgLines=new THREE.LineSegments(dbgGeo,new THREE.LineBasicMaterial({vertexColors:true,transparent:true,opacity:.9,depthTest:false}));
+dbgLines.frustumCulled=false; dbgLines.renderOrder=10; scene.add(dbgLines);
+let dbgN=0;
+function dline(x1,z1,x2,z2,r,g,b,y=1.0){
+  if(dbgN>=DBG_MAX)return; const o=dbgN*6;
+  dbgPos[o]=x1;dbgPos[o+1]=y;dbgPos[o+2]=z1;dbgPos[o+3]=x2;dbgPos[o+4]=y;dbgPos[o+5]=z2;
+  dbgCol[o]=dbgCol[o+3]=r;dbgCol[o+1]=dbgCol[o+4]=g;dbgCol[o+2]=dbgCol[o+5]=b; dbgN++;
+}
+/* Spatial hash (8 m cells), rebuilt every step – all proximity / raycast / collision queries go through it */
+const CELL=8, hash=new Map(), hashPool=[];
+const hkey=(cx,cz)=>(cx+2048)*4096+(cz+2048);
+function hashClear(){for(const a of hash.values()){a.length=0;hashPool.push(a);}hash.clear();}
+function hashAdd(o){const k=hkey(Math.floor(o.x/CELL),Math.floor(o.z/CELL));let a=hash.get(k);if(!a){a=hashPool.pop()||[];hash.set(k,a);}a.push(o);}
+const _near=[];
+function hashNear(x,z,rad){                       // returns shared scratch array
+  _near.length=0; const c0=Math.floor((x-rad)/CELL),c1=Math.floor((x+rad)/CELL),d0=Math.floor((z-rad)/CELL),d1=Math.floor((z+rad)/CELL);
+  for(let cx=c0;cx<=c1;cx++)for(let cz=d0;cz<=d1;cz++){const a=hash.get(hkey(cx,cz));if(a)for(let i=0;i<a.length;i++)_near.push(a[i]);}
+  return _near;
+}
+// distance from point to an agent's oriented box (peds: circle)
+function obbDist(a,px,pz){
+  const dx=px-a.x,dz=pz-a.z; if(a.kind==='ped')return hyp(dx,dz)-0.35;
+  const lf=Math.abs(dx*a.fx+dz*a.fz)-a.len/2, lr=Math.abs(-dx*a.fz+dz*a.fx)-a.wid/2;
+  return lf<=0&&lr<=0?Math.max(lf,lr):hyp(Math.max(lf,0),Math.max(lr,0));
+}
+// SAT overlap test for two oriented boxes (shrunk a little so that close passes are not crashes)
+function obbHit(a,b,k=0.92){
+  const dx=b.x-a.x,dz=b.z-a.z,ha=a.len/2*k,wa=a.wid/2*k,hb=b.len/2*k,wb=b.wid/2*k;
+  const c=Math.abs(a.fx*b.fx+a.fz*b.fz),s=Math.abs(a.fx*b.fz-a.fz*b.fx);
+  if(Math.abs(dx*a.fx+dz*a.fz)>ha+hb*c+wb*s)return false;
+  if(Math.abs(-dx*a.fz+dz*a.fx)>wa+hb*s+wb*c)return false;
+  if(Math.abs(dx*b.fx+dz*b.fz)>hb+ha*c+wa*s)return false;
+  if(Math.abs(-dx*b.fz+dz*b.fx)>wb+ha*s+wa*c)return false;
+  return true;
+}
+// hash raycast: nearest agent whose box is within `rad` of the ray. Returns {a,d} or null
+function rayCast(ox,oz,dx,dz,maxD,self,rad=1.4,kind=null){
+  for(let d=0;d<=maxD;d+=3){
+    const px=ox+dx*d,pz=oz+dz*d,l=hashNear(px,pz,6);
+    let best=null,bd=1e9;
+    for(let i=0;i<l.length;i++){const a=l[i];if(a===self||(kind&&a.kind!==kind))continue;const q=obbDist(a,px,pz);if(q<rad&&q<bd){bd=q;best=a;}}
+    if(best)return{a:best,d};
+  }
+  return null;
+}
+const stats={crashes:0,pedHits:0,redRuns:0,cutoffs:0,honks:0,bypasses:0,swerves:0,dodges:0,reroutes:0,rtor:0,reverses:0,stuck:0,spawned:0,exits:0,aebs:0,reward:0};
+// reward shaping for RL fine-tuning and the benchmark "fitness". Per metre / per second / per event.
+const RW={progress:.1,wait:.2,aeb:2,crash:20,ped:30,red:5,causeBrake:1.5,cutoff:2};
+function reward(v,x){v.rw+=x;stats.reward+=x;}
+let simT=0;
+const evlog=[]; function logEv(type,info){evlog.push({t:+simT.toFixed(1),type,...info});if(evlog.length>300)evlog.shift();}
+
+/* ============================== SHARED PROCEDURAL ASSETS ============================== */
+const GEO={
+  box:new THREE.BoxGeometry(1,1,1),
+  wheel:new THREE.CylinderGeometry(.5,.5,1,10).rotateX(Math.PI/2),
+  flat:new THREE.PlaneGeometry(1,1).rotateX(-Math.PI/2),
+  disc:new THREE.CircleGeometry(1,20).rotateX(-Math.PI/2),
+  head:new THREE.SphereGeometry(.5,8,6),
+  oct:new THREE.CylinderGeometry(.45,.45,.06,8).rotateZ(Math.PI/2),
+};
+function canvasTex(sz,draw){const c=document.createElement('canvas');c.width=c.height=sz;draw(c.getContext('2d'),sz);const t=new THREE.CanvasTexture(c);t.colorSpace=THREE.SRGBColorSpace;return t;}
+const glowTex=canvasTex(64,(g,s)=>{const r=g.createRadialGradient(s/2,s/2,0,s/2,s/2,s/2);r.addColorStop(0,'rgba(255,240,200,1)');r.addColorStop(1,'rgba(255,240,200,0)');g.fillStyle=r;g.fillRect(0,0,s,s);});
+const winRng=mulberry(77);
+const winLit=[...Array(16)].map(()=>winRng()<.55);
+const bldTex=canvasTex(128,(g)=>{g.fillStyle='#d2d2d2';g.fillRect(0,0,128,128);g.fillStyle='#33465c';for(let i=0;i<16;i++)g.fillRect((i%4)*32+7,(i>>2)*32+6,18,19);});
+const bldEmi=canvasTex(128,(g)=>{g.fillStyle='#000';g.fillRect(0,0,128,128);for(let i=0;i<16;i++){if(!winLit[i])continue;g.fillStyle=i%3?'#ffd58a':'#cfe2ff';g.fillRect((i%4)*32+7,(i>>2)*32+6,18,19);}});
+bldTex.wrapS=bldTex.wrapT=bldEmi.wrapS=bldEmi.wrapT=THREE.RepeatWrapping;
+const MAT={
+  paint:new THREE.MeshLambertMaterial(),
+  glass:new THREE.MeshLambertMaterial({color:0x1b2530}),
+  tyre:new THREE.MeshLambertMaterial({color:0x111214}),
+  lamp:new THREE.MeshBasicMaterial(),
+  shadow:new THREE.MeshBasicMaterial({color:0,transparent:true,opacity:.28,depthWrite:false}),
+  glow:new THREE.MeshBasicMaterial({map:glowTex,transparent:true,opacity:0,depthWrite:false,blending:THREE.AdditiveBlending}),
+  pole:new THREE.MeshLambertMaterial({color:0x3b4048}),
+  stop:new THREE.MeshLambertMaterial({color:0xc4161c}),
+  ground:new THREE.MeshStandardMaterial({vertexColors:true,roughness:.95,metalness:0}),
+  marks:new THREE.MeshLambertMaterial({vertexColors:true,polygonOffset:true,polygonOffsetFactor:-2,polygonOffsetUnits:-2}),
+  bld:new THREE.MeshLambertMaterial({vertexColors:true,map:bldTex,emissiveMap:bldEmi,emissive:0xffffff,emissiveIntensity:0}),
+  skin:new THREE.MeshLambertMaterial({color:0xe0b592}),
+  wire:new THREE.MeshBasicMaterial({color:0x00ffaa,wireframe:true}),
+};
+const VT=[
+  {n:'car',len:4.4,wid:1.85,bh:.75,ch:.6,cl:.5,cx:-.15,wr:.33,p:.60},
+  {n:'suv',len:4.8,wid:2.0,bh:.95,ch:.75,cl:.62,cx:-.2,wr:.4,p:.82},
+  {n:'van',len:5.6,wid:2.1,bh:1.2,ch:.9,cl:.7,cx:-.6,wr:.38,p:.94},
+  {n:'truck',len:8.2,wid:2.5,bh:1.3,ch:1.7,cl:.72,cx:-.9,wr:.5,p:1},
+];
+const CAR_COLS=[[.82,.82,.85],[.12,.12,.14],[.55,.57,.6],[.7,.1,.1],[.1,.25,.6],[.9,.9,.9],[.2,.4,.25],[.85,.6,.1],[.35,.2,.5],[.6,.75,.85]];
+const pickType=r=>VT.find(t=>r<t.p);
+function mkVehParts(n,parent){return{
+  body:new Inst(GEO.box,MAT.paint,n,true,parent), cabin:new Inst(GEO.box,MAT.glass,n,false,parent), wheel:new Inst(GEO.wheel,MAT.tyre,n*4,false,parent),
+  head:new Inst(GEO.box,MAT.lamp,n*2,true,parent), tail:new Inst(GEO.box,MAT.lamp,n*2,true,parent), ind:new Inst(GEO.box,MAT.lamp,n*4,true,parent),
+  shadow:new Inst(GEO.flat,MAT.shadow,n,false,parent), glow:new Inst(GEO.flat,MAT.glow,n,false,parent)};}
+let nightF=0, blinkOn=true;
+function placeVeh(ps,i,o){
+  const t=o.type,fx=o.fx,fz=o.fz,rx=-fz,rz=fx,x=o.x,z=o.z,sh=o.shake||0,gy=t.wr*.6;
+  ps.body.put(i,x,gy+t.bh/2+sh,z,fx,fz,t.len,t.bh,t.wid); ps.body.col(i,o.col[0],o.col[1],o.col[2]);
+  ps.cabin.put(i,x+fx*t.cx,gy+t.bh+t.ch/2+sh,z+fz*t.cx,fx,fz,t.len*t.cl,t.ch,t.wid*.88);
+  ps.shadow.put(i,x,.05,z,fx,fz,t.len*1.12,1,t.wid*1.2);
+  const hl=t.len/2,hw=t.wid/2,lit=nightF>.3&&!o.parked;
+  for(let q=0;q<4;q++){
+    const lx=(q<2?1:-1)*t.len*.32,lz=(q&1?1:-1)*(hw-.12);
+    ps.wheel.put(i*4+q,x+fx*lx+rx*lz,t.wr,z+fz*lx+rz*lz,fx,fz,t.wr*2,t.wr*2,.28);
+    const ix=(q<2?1:-1)*hl,iz=(q&1?1:-1)*(hw-.12),on=blinkOn&&(o.ind===2||(o.ind===1&&(q&1))||(o.ind===-1&&!(q&1)));
+    if(on){ps.ind.put(i*4+q,x+fx*ix+rx*iz,gy+t.bh*.62+sh,z+fz*ix+rz*iz,fx,fz,.14,.16,.24);ps.ind.col(i*4+q,1,.6,0);}else ps.ind.hide(i*4+q);
+  }
+  for(let q=0;q<2;q++){
+    const lz=(q?1:-1)*(hw-.42);
+    ps.head.put(i*2+q,x+fx*hl+rx*lz,gy+t.bh*.6+sh,z+fz*hl+rz*lz,fx,fz,.08,.16,.42); const h=lit?1:.55; ps.head.col(i*2+q,h,h,h*.85);
+    ps.tail.put(i*2+q,x-fx*hl+rx*lz,gy+t.bh*.68+sh,z-fz*hl+rz*lz,fx,fz,.08,.16,.42);
+    if(o.rev)ps.tail.col(i*2+q,1,1,.92);else if(o.brake)ps.tail.col(i*2+q,1,.07,.04);else ps.tail.col(i*2+q,lit?.5:.28,.02,.02);
+  }
+  if(lit)ps.glow.put(i,x+fx*(hl+6.5),.07,z+fz*(hl+6.5),fx,fz,15,1,6.5);else ps.glow.hide(i);
+}
+function hideVeh(ps,i){ps.body.hide(i);ps.cabin.hide(i);ps.shadow.hide(i);ps.glow.hide(i);for(let q=0;q<4;q++){ps.wheel.hide(i*4+q);ps.ind.hide(i*4+q);}for(let q=0;q<2;q++){ps.head.hide(i*2+q);ps.tail.hide(i*2+q);}}
+function doneVeh(ps){for(const k in ps)ps[k].done();}
+
+/* ============================== WORLD GENERATION ============================== */
+let world=null;
+// lateral offset (m, to the right of the road centre line) of fractional lane index lf: -1 = left pocket, 0..L-1 through lanes, L = right-turn bay
+const laneOff=(L,lf)=>lf<-1?(lf+1)*LW:lf<0?lerp(0,MED+LW/2,lf+1):lf<=L-1?MED+(lf+.5)*LW:lerp(MED+(L-.5)*LW,MED+L*LW+STRIP/2,Math.min(lf-(L-1),1));
+const C_ASPH=[.17,.18,.2],C_MED=[.22,.22,.21],C_SW=[.56,.56,.54],C_LOT=[.4,.42,.38],C_PARK=[.24,.42,.22],C_WHT=[.92,.92,.92],C_YEL=[.95,.74,.1],C_GRASS=[.2,.3,.19];
+
+function buildWorld(){
+  if(world){scene.remove(world.group);world.group.traverse(o=>{if(o.geometry&&!Object.values(GEO).includes(o.geometry))o.geometry.dispose();if(o.isInstancedMesh)o.dispose();});}
+  const N=P.gridX,M=P.gridY,Lv=P.lanesNS,Lh=P.lanesEW,HWv=MED+Lv*LW+STRIP,HWh=MED+Lh*LW+STRIP;
+  const rng=mulberry(1234+N*31+M*17+Lv*5+Lh*3), group=new THREE.Group(); scene.add(group);
+  const w=world={N,M,Lv,Lh,HWv,HWh,group,nodes:new Map(),real:[],segs:[],entries:[],walkEdges:[],parked:[],blocks:[]};
+  const nx=i=>(i-N/2)*SP, nz=j=>(j-M/2)*SP; w.nx=nx; w.nz=nz;
+  const nodeAt=(i,j)=>{const key=i+','+j;let n=w.nodes.get(key);
+    if(!n){n={i,j,x:nx(i),z:nz(j),real:i>=0&&i<=N&&j>=0&&j<=M,in:[],out:[],box:[],q:[],id:w.nodes.size,curves:new Map()};w.nodes.set(key,n);if(n.real)w.real.push(n);}return n;};
+  for(let i=0;i<=N;i++)for(let j=0;j<=M;j++)nodeAt(i,j);
+  const ext=k=>(k&1?HWv:HWh)+CWS; w.ext=ext;                 // junction box half-extent along travel direction k
+  const mkSeg=(a,b,k)=>{const[dx,dz]=DIRS[k],ea=a.real?ext(k):0,eb=b.real?ext(k):0;
+    const s={id:w.segs.length,from:a,to:b,k,dx,dz,rx:-dz,rz:dx,L:k&1?Lh:Lv,ox:a.x+dx*ea,oz:a.z+dz*ea,len:SP-ea-eb,vehs:[],twin:null,parking:false,spawnT:rr(0,6)};
+    w.segs.push(s);a.out[k]=s;b.in[k]=s;return s;};
+  for(const n of w.real)for(let k=0;k<4;k++){const nb=nodeAt(n.i+DIRS[k][0],n.j+DIRS[k][1]);mkSeg(n,nb,k);if(!nb.real)w.entries.push(mkSeg(nb,n,(k+2)%4));}
+  for(const s of w.segs)s.twin=s.to.out[(s.k+2)%4];
+  for(const s of w.segs)if(s.id<s.twin.id&&s.from.real&&s.to.real)s.parking=s.twin.parking=rng()<P.parkFrac;
+  // intersection control types
+  w.real.forEach((n,idx)=>{const h=(n.i*7+n.j*13)%5;
+    n.type=P.control==='All signals'?'sig':P.control==='All-way stops'?'awsc':P.control==='Two-way stops'?'twsc':h<3?'sig':h===3?'awsc':'twsc';
+    n.idx=idx;n.st=['R','R','R','R'];n.sl=['R','R','R','R'];n.ra=[9,9,9,9];n.rl=[9,9,9,9];n.ped=['D','D','D','D'];n.stamp=0;n.g=rng()<.5?0:1;n.t=rng()*20;n.ld=[0,0];n.G=20;n.W0=0;
+    buildConflicts(n);});
+  // pedestrian graph: 4 corners per junction, crosswalk + sidewalk edges
+  const mkEdge=(a,b,type,n,leg)=>{const e={a,b,type,n,leg,len:hyp(b.x-a.x,b.z-a.z),opp:null,ux:0,uz:0,px:0,pz:0};e.ux=(b.x-a.x)/e.len;e.uz=(b.z-a.z)/e.len;a.e.push(e);b.e.push(e);return e;};
+  const CS=[[1,-1],[1,1],[-1,1],[-1,-1]];                     // NE SE SW NW
+  for(const n of w.real){n.corner=CS.map(([sx,sz],c)=>({x:n.x+sx*(HWv+SWW/2),z:n.z+sz*(HWh+SWW/2),n,c,e:[]}));
+    n.xw=[[3,0],[0,1],[1,2],[2,3]].map(([a,b],k)=>mkEdge(n.corner[a],n.corner[b],'x',n,k));}
+  const pair=(e1,e2,px,pz)=>{e1.opp=e2;e2.opp=e1;e1.px=px;e1.pz=pz;e2.px=-px;e2.pz=-pz;w.walkEdges.push(e1,e2);};   // (px,pz) points towards the road
+  for(const n of w.real){
+    if(n.i<N){const e=nodeAt(n.i+1,n.j);pair(mkEdge(n.corner[0],e.corner[3],'w',n,1),mkEdge(n.corner[1],e.corner[2],'w',n,1),0,1);}
+    if(n.j<M){const s=nodeAt(n.i,n.j+1);pair(mkEdge(n.corner[2],s.corner[3],'w',n,2),mkEdge(n.corner[1],s.corner[0],'w',n,2),1,0);}
+  }
+  /* ---------- static geometry ---------- */
+  const G=new Batch(),K=new Batch();
+  const X0=nx(-1),X1=nx(N+1),Z0=nz(-1),Z1=nz(M+1); w.bounds={X0,X1,Z0,Z1};
+  G.box(X0-400,Z0-400,X1+400,Z1+400,-.06,C_GRASS);
+  for(let i=0;i<=N;i++)G.box(nx(i)-HWv,Z0,nx(i)+HWv,Z1,0,C_ASPH);
+  for(let j=0;j<=M;j++)G.box(X0,nz(j)-HWh,X1,nz(j)+HWh,0,C_ASPH);
+  const bgeos=[];
+  for(let bi=-1;bi<=N;bi++)for(let bj=-1;bj<=M;bj++){
+    const xa=bi<0?X0:nx(bi)+HWv,xb=bi>=N?X1:nx(bi+1)-HWv,za=bj<0?Z0:nz(bj)+HWh,zb=bj>=M?Z1:nz(bj+1)-HWh;
+    G.box(xa,za,xb,zb,.14,C_SW);
+    const lx0=xa+SWW,lx1=xb-SWW,lz0=za+SWW,lz1=zb-SWW; G.box(lx0,lz0,lx1,lz1,.15,C_LOT); w.blocks.push({x0:lx0,z0:lz0,x1:lx1,z1:lz1});
+    const cols=(lx1-lx0)>60?3:2,rows=2,cw=(lx1-lx0)/cols,ch=(lz1-lz0)/rows,inner=bi>=0&&bi<N&&bj>=0&&bj<M;
+    for(let a=0;a<cols;a++)for(let b=0;b<rows;b++){
+      const cx=lx0+cw*(a+.5),cz=lz0+ch*(b+.5);
+      if(rng()<.13){G.box(cx-cw/2+1,cz-ch/2+1,cx+cw/2-1,cz+ch/2-1,.16,C_PARK);continue;}
+      const bw=cw-2-rng()*5,bd=ch-2-rng()*5,bh=inner?9+rng()*rng()*70:6+rng()*14;
+      const g=new THREE.BoxGeometry(bw,bh,bd),uv=g.attributes.uv,tone=.55+rng()*.4,tint=[tone*(.9+rng()*.15),tone*(.9+rng()*.1),tone*(.88+rng()*.15)];
+      for(let v=0;v<24;v++){const f=v>>2;if(f===2||f===3)uv.setXY(v,.02,.02);else uv.setXY(v,uv.getX(v)*Math.max(1,Math.round((f<2?bd:bw)/4))/4,uv.getY(v)*Math.max(1,Math.round(bh/3.5))/4);}
+      const col=new Float32Array(72);for(let v=0;v<24;v++)col.set(tint,v*3);g.setAttribute('color',new THREE.BufferAttribute(col,3));
+      g.translate(cx,bh/2+.15,cz);bgeos.push(g);
+    }
+  }
+  if(bgeos.length){group.add(new THREE.Mesh(mergeGeometries(bgeos),MAT.bld));bgeos.forEach(g=>g.dispose());}
+  // lane markings, medians, stop lines, parking stalls
+  const line=(sg,s0,s1,off,wd,col,y=.035)=>{if(s1<=s0)return;const sm=(s0+s1)/2;K.rect(sg.ox+sg.dx*sm+sg.rx*off,sg.oz+sg.dz*sm+sg.rz*off,sg.dx,sg.dz,(s1-s0)/2,wd/2,y,col);};
+  for(const sg of w.segs)if(sg.id<sg.twin.id)line(sg,0,sg.len,0,MED*2,C_MED,.02);
+  for(const sg of w.segs){
+    const L=sg.L,toR=sg.to.real,pz=toR?sg.len-POCK:sg.len,eo=MED+L*LW;
+    line(sg,0,pz,MED,.18,C_YEL);
+    if(toR){line(sg,pz+7,sg.len,MED,.14,C_WHT);line(sg,sg.len-.5,sg.len,(L*LW+STRIP)/2,MED*2+L*LW+STRIP,C_WHT);}
+    for(let l=1;l<L;l++){for(let s=3;s<sg.len-(toR?20:0);s+=9)line(sg,s,s+3,MED+l*LW,.14,C_WHT);if(toR)line(sg,sg.len-18,sg.len,MED+l*LW,.14,C_WHT);}
+    if(toR){line(sg,0,pz,eo,.14,C_WHT);for(let s=pz;s<sg.len-14;s+=4)line(sg,s,s+1.5,eo,.14,C_WHT);line(sg,sg.len-14,sg.len,eo,.14,C_WHT);}else line(sg,0,sg.len,eo,.14,C_WHT);
+    if(sg.parking)for(let s=16;s+6.2<=pz-4;s+=6.2){
+      line(sg,s-.06,s+.06,eo+STRIP/2,STRIP,C_WHT);line(sg,s+6.14,s+6.26,eo+STRIP/2,STRIP,C_WHT);
+      if(rng()<.62){const t=pickType(rng()*.93),o=eo+1.55,c=s+3.1;
+        w.parked.push({kind:'veh',parked:true,type:t,len:t.len,wid:t.wid,x:sg.ox+sg.dx*c+sg.rx*o,z:sg.oz+sg.dz*c+sg.rz*o,fx:sg.dx,fz:sg.dz,vx:0,vz:0,v:0,col:CAR_COLS[(rng()*CAR_COLS.length)|0],ind:0,brake:false});}
+    }
+  }
+  // zebra crossings
+  for(const n of w.real)for(let k=0;k<4;k++){const[dx,dz]=DIRS[k],dist=(k&1?HWv:HWh)+2,lat=k&1?HWh:HWv;
+    for(let o=-lat+.7;o<=lat-.7;o+=1.3)K.rect(n.x+dx*dist-dz*o,n.z+dz*dist+dx*o,dx,dz,1.5,.32,.035,C_WHT);}
+  const gm=G.mesh(MAT.ground),km=K.mesh(MAT.marks); group.add(gm,km);
+  // parked cars (static instances)
+  w.pparts=mkVehParts(Math.max(1,w.parked.length),group); w.parked.forEach((o,i)=>placeVeh(w.pparts,i,o)); doneVeh(w.pparts);
+  // signal heads, stop signs, pedestrian signals, coloured stop bars
+  const R=w.real.length;
+  w.poles=new Inst(GEO.box,MAT.pole,R*8,false,group); w.lamps=new Inst(GEO.box,MAT.lamp,R*16,true,group);
+  w.bars=new Inst(GEO.box,MAT.lamp,R*8,true,group); w.plamps=new Inst(GEO.box,MAT.lamp,R*8,true,group); w.signs=new Inst(GEO.oct,MAT.stop,R*4,false,group);
+  for(const n of w.real)for(let k=0;k<4;k++){
+    const[dx,dz]=DIRS[k],rx=-dz,rz=dx,e=ext(k),hw=k&1?HWh:HWv,L=k&1?Lh:Lv,b=n.idx*4+k;
+    const stopCtl=n.type==='awsc'||(n.type==='twsc'&&!(k&1));
+    if(n.type==='sig'){
+      const px=n.x+dx*(e-1.5)+rx*(hw+1.2),pz=n.z+dz*(e-1.5)+rz*(hw+1.2);
+      w.poles.put(b*2,px,3.4,pz,dx,dz,.25,6.8,.25);
+      w.poles.put(b*2+1,px-rx*(hw/2+.4),6.6,pz-rz*(hw/2+.4),dx,dz,.16,.16,hw+.8);
+      const tx=n.x+dx*(e-1.7)+rx*hw*.5,tz=n.z+dz*(e-1.7)+rz*hw*.5;
+      for(let q=0;q<3;q++)w.lamps.put(b*4+q,tx,6.1-q*.55,tz,dx,dz,.3,.46,.46);
+      w.lamps.put(b*4+3,n.x+dx*(e-1.7)+rx*.9,5.7,n.z+dz*(e-1.7)+rz*.9,dx,dz,.3,.6,.6);
+    }else if(stopCtl){
+      const px=n.x-dx*(e+.8)+rx*(hw+1),pz=n.z-dz*(e+.8)+rz*(hw+1);
+      w.poles.put(b*2,px,1.2,pz,dx,dz,.1,2.4,.1); w.signs.put(b,px-dx*.08,2.6,pz-dz*.08,dx,dz,1,1,1);
+    }
+    const bo=MED+(L*LW+STRIP)/2,bx=n.x-dx*(e-.55),bz=n.z-dz*(e-.55);
+    w.bars.put(b*2,bx+rx*bo,.06,bz+rz*bo,dx,dz,.5,.03,L*LW+STRIP-.3); w.bars.put(b*2+1,bx,.06,bz,dx,dz,.5,.03,MED*2-.3);
+    const sc=stopCtl?[.9,.2,.2]:[.25,.25,.25]; w.bars.col(b*2,...sc); w.bars.col(b*2+1,...sc);
+    if(n.type==='sig'){const xe=n.xw[k];[[xe.a,1],[xe.b,-1]].forEach(([c,sg],q)=>w.plamps.put(b*2+q,c.x+xe.ux*sg*1.4,2.7,c.z+xe.uz*sg*1.4,xe.ux,xe.uz,.25,.4,.4));}
+  }
+  [w.poles,w.lamps,w.bars,w.plamps,w.signs].forEach(i=>i.done());
+  // street lamps
+  const lp=[];for(const e of w.walkEdges)for(let s=18;s<e.len-10;s+=34)lp.push(e.a.x+e.ux*s+e.px*1.5,e.a.z+e.uz*s+e.pz*1.5,e.ux,e.uz);
+  const nl=Math.max(1,lp.length/4);
+  w.lampPole=new Inst(GEO.box,MAT.pole,nl,false,group); w.lampBulb=new Inst(GEO.box,MAT.lamp,nl,true,group); w.lampGlow=new Inst(GEO.disc,MAT.glow,nl,false,group);
+  for(let i=0;i<lp.length/4;i++){const x=lp[i*4],z=lp[i*4+1];w.lampPole.put(i,x,3.6,z,1,0,.16,7.2,.16);w.lampBulb.put(i,x,7.25,z,1,0,.7,.18,.7);w.lampGlow.put(i,x,.2,z,1,0,11,1,11);}
+  [w.lampPole,w.lampBulb,w.lampGlow].forEach(i=>i.done());
+  w.laneKm=w.segs.reduce((a,s)=>a+s.len*s.L,0)/1000;
+}
+
+/* ============================== JUNCTION GEOMETRY, SIGNALS & RIGHT-OF-WAY ============================== */
+function getCurve(n,k,lane,turn){                 // path through junction n for approach heading k from integer lane
+  const key=(k*8+lane+1)*3+TI[turn]; let c=n.curves.get(key); if(c)return c;
+  const si=n.in[k],so=n.out[turn==='S'?k:turn==='R'?(k+1)%4:(k+3)%4];
+  const ol=turn==='S'?clamp(lane,0,so.L-1):turn==='L'?0:so.L-1;
+  const o0=laneOff(si.L,lane),o2=laneOff(so.L,ol);
+  const x0=si.ox+si.dx*si.len+si.rx*o0,z0=si.oz+si.dz*si.len+si.rz*o0,x2=so.ox+so.rx*o2,z2=so.oz+so.rz*o2;
+  const x1=turn==='S'?(x0+x2)/2:si.dx===0?x0:x2, z1=turn==='S'?(z0+z2)/2:si.dx===0?z2:z0;
+  const NP=16,pts=new Float32Array(NP*2),cum=new Float32Array(NP);
+  for(let i=0;i<NP;i++){const t=i/(NP-1),a=(1-t)*(1-t),b=2*t*(1-t),d=t*t;pts[i*2]=a*x0+b*x1+d*x2;pts[i*2+1]=a*z0+b*z1+d*z2;
+    if(i)cum[i]=cum[i-1]+hyp(pts[i*2]-pts[i*2-2],pts[i*2+1]-pts[i*2-1]);}
+  c={pts,cum,len:cum[NP-1],ol,so,k,turn,lane}; n.curves.set(key,c); return c;
+}
+function curvePt(c,u,out){
+  const n=c.cum.length;let i=1;while(i<n-1&&c.cum[i]<u)i++;
+  const a=i-1,l=c.cum[i]-c.cum[a],f=clamp((u-c.cum[a])/l,0,1),p=c.pts;
+  out.x=lerp(p[a*2],p[i*2],f);out.z=lerp(p[a*2+1],p[i*2+1],f);out.tx=(p[i*2]-p[a*2])/l;out.tz=(p[i*2+1]-p[a*2+1])/l;return out;
+}
+// 12x12 movement conflict matrix (approach*3 + L/S/R), derived geometrically from the sampled curves; identical for all junctions
+function buildConflicts(n){
+  if(world.conf){n.conf=world.conf;return;}
+  const mvCurves=(k,t)=>{const L=n.in[k].L;return t===0?[getCurve(n,k,-1,'L')]:t===2?[getCurve(n,k,L,'R')]:[...Array(L)].map((_,l)=>getCurve(n,k,l,'S'));};
+  const conf=[...Array(12)].map(()=>Array(12).fill(false)),cu=[...Array(12)].map(()=>Array(12).fill(0));   // cu[a][b]: distance along a after which it has cleared b
+  for(let a=0;a<12;a++)for(let b=a+1;b<12;b++){
+    if((a/3|0)===(b/3|0))continue;
+    for(const ca of mvCurves(a/3|0,a%3))for(const cb of mvCurves(b/3|0,b%3))
+      for(let i=0;i<ca.cum.length;i++)for(let j=0;j<cb.cum.length;j++)if(hyp(ca.pts[i*2]-cb.pts[j*2],ca.pts[i*2+1]-cb.pts[j*2+1])<2.6){
+        conf[a][b]=conf[b][a]=true;cu[a][b]=Math.max(cu[a][b],ca.cum[i]);cu[b][a]=Math.max(cu[b][a],cb.cum[j]);}
+  }
+  world.conf=n.conf=conf; world.cu=cu;
+}
+// is the junction still occupied by a vehicle that has not yet passed its conflict point with movement mv?
+function boxBusy(n,mv,v,c){
+  for(const w of n.box){if(w===v||!n.conf[mv][w.mv])continue;
+    if(c&&w.mode==='junc'&&w.curve.so===c.so&&w.curve.ol!==c.ol)continue;      // it merges into a different lane of the road being entered
+    if(w.mode==='junc'?w.u-w.len/2<world.cu[w.mv][mv]+1.5:w.seg.to===n)return true;}
+  for(const w of n.q)if(w!==v&&w.go&&!w.boxNode&&n.conf[mv][w.seg.k*3+TI[w.turn]])return true;      // right-of-way already granted to a conflicting stopped vehicle
+  return false;
+}
+/* NEMA dual-ring controller. Group 0 = E-W (phases 1,2,5,6), group 1 = N-S (3,4,7,8).
+   Ring r serves a leading protected left (skipped without demand) then the opposing through; both rings cross the barrier together. */
+function sigStart(n){
+  const ax=n.g===0?[1,3]:[0,2], four=P.sigMode[0]==='4';
+  const dem=k=>n.in[k].vehs.some(v=>v.turn==='L'&&n.in[k].len-v.s<48);
+  n.ld[0]=four?7:dem(ax[1])?8:0; n.ld[1]=four?7:dem(ax[0])?8:0;
+  const ls=Math.max(n.ld[0],n.ld[1]); n.W0=ls>0?ls+4:0;
+  n.G=n.W0+clamp(7+(2*(n.g===0?world.HWv:world.HWh)+SWW)/1.5,16,34);
+  n.t=0; n.stamp++;
+}
+function sigUpdate(n,dt){
+  n.t+=dt; if(n.t>=n.G+5){n.g^=1;sigStart(n);}
+  const t=n.t,ax=n.g===0?[1,3]:[0,2];
+  for(let k=0;k<4;k++){n.st[k]='R';n.sl[k]='R';n.ped[k]='D';}
+  for(let r=0;r<2;r++){
+    const ka=ax[r],kb=ax[1-r],Lg=n.ld[r],ls=Lg>0?Lg+4:0;
+    n.st[ka]=t<ls?'R':t<n.G?'G':t<n.G+3.5?'Y':'R';
+    if(Lg>0&&t<Lg)n.sl[kb]='G';else if(Lg>0&&t<Lg+3)n.sl[kb]='Y';
+  }
+  for(const k of ax){const o=n.st[(k+2)%4];if(n.sl[k]==='R'){if(o==='G')n.sl[k]='F';else if(o==='Y')n.sl[k]='Y';}}   // flashing-yellow permissive left
+  for(let k=0;k<4;k++){n.ra[k]=n.st[k]==='R'?n.ra[k]+dt:0;n.rl[k]=n.sl[k]==='R'?n.rl[k]+dt:0;}
+  const ps=t>=n.W0&&t<n.W0+7?'W':t>=n.W0+7&&t<n.G?'F':'D';
+  if(n.g===0){n.ped[0]=n.ped[2]=ps;}else{n.ped[1]=n.ped[3]=ps;}
+}
+function updateNodes(dt){
+  for(const n of world.real){
+    if(n.type==='sig')sigUpdate(n,dt);
+    else if(n.q.length)n.q=n.q.filter(w=>w.alive&&w.mode==='seg'&&w.seg.to===n&&!w.boxNode);
+  }
+}
+function drawSignals(){
+  const w=world,fl=(simT*2%1)<.5; w.bars.m.visible=P.sigBars;
+  for(const n of w.real){ if(n.type!=='sig')continue;
+    for(let k=0;k<4;k++){
+      const b=n.idx*4+k,st=n.st[k],sl=n.sl[k];
+      w.lamps.col(b*4,st==='R'?1:.14,st==='R'?.06:.02,.02); w.lamps.col(b*4+1,st==='Y'?1:.14,st==='Y'?.75:.1,0); w.lamps.col(b*4+2,.03,st==='G'?1:.14,st==='G'?.35:.05);
+      const lc=sl==='G'?[.1,1,.35]:sl==='R'?[1,.06,.02]:(sl==='Y'||fl)?[1,.75,0]:[.16,.1,0];
+      w.lamps.col(b*4+3,lc[0],lc[1],lc[2]);
+      const tc=st==='G'?[.1,.9,.3]:st==='Y'?[1,.75,0]:[.95,.1,.08];
+      w.bars.col(b*2,tc[0],tc[1],tc[2]); w.bars.col(b*2+1,lc[0],lc[1],lc[2]);
+      const p=n.ped[k],pc=p==='W'?[1,1,1]:(p==='D'||fl)?[1,.35,0]:[.12,.05,0];
+      w.plamps.col(b*2,pc[0],pc[1],pc[2]); w.plamps.col(b*2+1,pc[0],pc[1],pc[2]);
+    }
+  }
+  w.lamps.done();w.bars.done();w.plamps.done();
+}
+/* ---------- right-of-way decisions ---------- */
+// critical gap; in AI / RL mode a committed AGGRESSIVE_NUDGE accepts 20 % shorter gaps (still checked, still under AEB)
+const tcOf=(v,base)=>{const p=aiP(v),t0=(base+.45*(Math.max(world.Lv,world.Lh)-1)-1.6*v.ag)*W.gf*(v2on()?asF(v):p&&p[2]>=.5?.8:1);return Math.max(2.2,t0*(v.sloppy?.6:1)-Math.min(.06*v.waitT,.3*t0));};   // critical gap (s): shrinks with aggressiveness, impatience and misjudgement
+function willEnter(n,kb,w){
+  if(w.crashT>0||w.dp>0)return false;
+  if(n.type==='sig'){const st=w.turn==='L'?n.sl[kb]:n.st[kb];return st==='G'||(st==='Y'&&w.v>4)||((st==='F'||st==='R')&&w.go&&w.v>1);}
+  if(n.type==='twsc'&&(kb&1)&&w.turn!=='L')return true;
+  return w.go;
+}
+function gapClear(v,tc,c){                          // c: own curve for right turns -> only traffic bound for the same exit lane counts
+  const sg=v.seg,n=sg.to,k=sg.k,mv=k*3+TI[v.turn],R=PR*W.pr;let ok=true;
+  for(let kb=0;kb<4;kb++){ if(kb===k)continue; const sb=n.in[kb];
+    for(const w of sb.vehs){
+      const dw=sb.len-w.s-w.len/2; if(dw>R||!n.conf[mv][kb*3+TI[w.turn]]||!willEnter(n,kb,w))continue;
+      if(c&&w.laneOld===w.lane){const wc=getCurve(n,kb,turnLane(w),w.turn);if(wc.so===c.so&&wc.ol!==c.ol)continue;}
+      const bad=dw/Math.max(w.v,3)<tc; if(bad)ok=false; if(v.dbg)v.rays.push(v.x,v.z,w.x,w.z,bad?1:2);
+    }
+  }
+  if(boxBusy(n,mv,v,c))ok=false;
+  const pl=player.car;
+  if(pl.active){const d=hyp(pl.x-n.x,pl.z-n.z);if(d<R&&pl.v>2&&pl.fx*(n.x-pl.x)+pl.fz*(n.z-pl.z)>d*.8&&d/pl.v<tc+1){ok=false;if(v.dbg)v.rays.push(v.x,v.z,pl.x,pl.z,1);}}
+  return ok;
+}
+// right-on-red: directional raycasts against the flow of the lane being entered (traffic from the left) and along the kerb-side stretch of both crosswalks swept by the turn
+function rtorRays(v,c){
+  const so=c.so,n=v.seg.to,R=PR*W.pr*.8,tc=tcOf(v,4.6);let ok=true;
+  const off=laneOff(so.L,c.ol),ox=so.ox+so.rx*off,oz=so.oz+so.rz*off,h=rayCast(ox,oz,-so.dx,-so.dz,R,v,1.3,'veh');
+  let bad=false; if(h&&!h.a.parked){const app=h.a.vx*so.dx+h.a.vz*so.dz;bad=app>2&&h.d/app<tc;}
+  if(bad)ok=false; if(v.dbg){const d=h?h.d:R;v.rays.push(ox,oz,ox-so.dx*d,oz-so.dz*d,bad?1:3);}
+  for(const[leg,px,pz]of[[(v.seg.k+2)%4,v.x,v.z],[so.k,ox,oz]]){
+    const e=n.xw[leg],t0=clamp((px-e.a.x)*e.ux+(pz-e.a.z)*e.uz,3,e.len-3),a0=Math.max(1.5,t0-5.5),a1=Math.min(e.len-1.5,t0+5.5);
+    const sx=e.a.x+e.ux*a0,sz=e.a.z+e.uz*a0,hp=rayCast(sx,sz,e.ux,e.uz,a1-a0,v,1.6,'ped'),hit=!!(hp&&hp.a.inRoad);
+    if(hit)ok=false; if(v.dbg){const d=hp?hp.d:a1-a0;v.rays.push(sx,sz,sx+e.ux*d,sz+e.uz*d,hit?1:3);}
+  }
+  return ok;
+}
+function exitSpace(v,c){                           // do not block the box
+  const so=c.so;let minS=1e9,slow=false,need=v.len+2.5;
+  for(const w of so.vehs)if(w.lane===c.ol||w.laneOld===c.ol){const r=w.s-w.len/2;if(r<minS){minS=r;slow=w.v<2.5;}}
+  for(const w of v.seg.to.box)if(w!==v&&w.mode==='junc'&&w.curve.so===so&&w.curve.ol===c.ol){need+=w.len+2;if(w.v<1.5)slow=true;}
+  return minS>need||(!slow&&minS>4);
+}
+const turnLane=v=>v.turn==='L'?-1:v.turn==='R'?v.seg.L:clamp(v.lane,0,v.seg.L-1);
+function mayEnter(v,dF){
+  const sg=v.seg,n=sg.to,k=sg.k,t=v.turn,mv=k*3+TI[t],c=getCurve(n,k,turnLane(v),t);
+  v.gapGo=false;                                  // set when the entry is granted by gap acceptance (permissive left, right on red, stop-sign gap)
+  if(dF<8+v.v*1.5&&!exitSpace(v,c)){v.why='exit blocked';return false;}
+  const busy=dF<6+v.v*1.2&&boxBusy(n,mv,v);
+  if(n.type==='sig'){
+    const left=t==='L',st=left?n.sl[k]:n.st[k];
+    if(st==='G'){v.why=busy?'junction occupied':'';return !busy;}
+    if(st==='F'){if(gapClear(v,tcOf(v,5.2))){v.why='';v.gapGo=true;return true;}v.why='yield: permissive left';return false;}
+    if(st==='Y'){
+      if(v.yStamp!==n.stamp){                    // one decision per yellow: stop or gamble
+        v.yStamp=n.stamp; const req=v.v*v.v/(2*Math.max(dF,.5)),tArr=dF/Math.max(v.v,1);
+        let p=1/(1+Math.exp(-(req-(3.0-2.0*v.ag))/.45)); if(tArr>4+1.5*v.ag)p*=.12; if(v.v<1.5)p=0;
+        v.yGo=Math.random()<p; if(v.yGo&&req<2.4)v.gamble=3.5;
+      }
+      v.why=v.yGo?'yellow: going':'yellow: stopping';
+      return v.yGo&&!busy&&(!left||n.st[(k+2)%4]==='R'||gapClear(v,tcOf(v,5.2)));
+    }
+    if(v.yStamp===n.stamp&&v.yGo&&(left?n.rl[k]:n.ra[k])<.3+1.5*v.ag&&v.v>4){v.why='running early red';return true;}
+    if(t==='R'){
+      if(v.stopT<1){v.why='red: full stop';return false;}
+      if(gapClear(v,tcOf(v,4.6),c)&&rtorRays(v,c)){v.why='right on red';v.gapGo=true;return true;}
+      v.why='right on red: waiting for gap';return false;
+    }
+    v.why='red';return false;
+  }
+  if(n.type==='twsc'&&(k&1)){                     // major road of a two-way stop
+    if(t!=='L'?!busy:gapClear(v,tcOf(v,5.2))){v.why='';v.gapGo=t==='L';return true;}
+    v.why=t==='L'?'yield: left across major':'junction occupied';return false;
+  }
+  if(v.stopT<.25+.6*(1-v.ag)){v.why='stop sign';return false;}
+  const q=n.q; if(!q.includes(v)){q.push(v);v.qAt=simT;}
+  for(const w of q){if(w===v)break;const mw=w.seg.k*3+TI[w.turn];
+    if(n.conf[mv][mw]&&!(simT-w.qAt<5&&boxBusy(n,mw,w))){v.why='stop: yielding (arrival order)';return false;}}
+  if(boxBusy(n,mv,v)){v.why='stop: junction occupied';return false;}
+  if(n.type==='twsc'&&!gapClear(v,tcOf(v,t==='R'?4.6:t==='S'?5.6:6.4),t==='R'?c:null)){v.why='stop: waiting for gap';return false;}
+  v.why='';v.gapGo=n.type==='twsc';return true;
+}
+
+/* ============================== VEHICLE AGENTS (IDM + MOBIL + perception) ============================== */
+const vehs=[],vehFree=[],vehById=new Map(); for(let i=MAXV-2;i>=0;i--)vehFree.push(i);          // slot MAXV-1 is reserved for the player car
+const vparts=mkVehParts(MAXV,scene);
+let vid=0;
+const _p={x:0,z:0,tx:0,tz:0};
+function spawnVeh(sg,s,lane,opt={}){
+  if(!vehFree.length)return null; const t=opt.type||pickType(Math.random());
+  const v={kind:'veh',id:++vid,slot:vehFree.pop(),alive:true,type:t,len:t.len,wid:t.wid,col:CAR_COLS[(Math.random()*CAR_COLS.length)|0],
+    seg:sg,s,lane,laneOld:lane,laneF:lane,latT:null,mode:'seg',turn:'S',curve:null,u:0,jOff:0,boxNode:null,mv:-1,
+    v:opt.v??0,acc:0,accHeld:0,v0c:10,x:0,z:0,fx:sg.dx,fz:sg.dz,vx:0,vz:0,
+    go:false,goKnown:false,goHold:0,why:'',yStamp:-1,yGo:false,gamble:0,stopT:0,waitT:0,stuckT:0,creep:0,crashT:0,resume:false,dp:0,ignore:null,byp:null,
+    lapseT:0,lapseIn:0,pT:Math.random()*.1,mobT:Math.random()*.5,lcCool:0,obs:null,obsD:1e9,obsV:0,lead:null,gap:1e9,
+    see:[{fn:null,zn:'',until:0,val:true},{fn:null,zn:'',until:0,val:true}],honkT:0,ind:0,brake:false,abs:false,aeb:false,skid:0,shake:0,swT:0,state:'cruise',rays:[],dbg:false,sloppy:false,
+    dest:null,route:null,arrived:false,det:null,bypNeed:0,dpReq:0,rrT:Math.random()*4,jT:0,holdT:0,lastDodge:null,soft:false,rev:false,revV:0,revD:0,jV:0,tightO:null,
+    intent:-1,probs:null,aiT:-1e9,near:true,stopping:false,gapGo:false,rw:0,act:-1,actT:-1e9,needTurn:0,decT:-1e9,lanePref:0,asF:1};
+  // stochastic human-factor parameters
+  v.ag=clamp(P.aggrMean+gauss()*P.aggrSpread,.1,1);                 // aggressiveness alpha
+  v.di=clamp(Math.random()*Math.random()*1.7,0,1);                  // distracted-driving index D (skewed low)
+  v.v0f=.82+.42*v.ag+rr(-.05,.05); v.T=1.9-1.15*v.ag; v.amax=1.3+1.6*v.ag; v.b=2+1.6*v.ag; v.s0=2.2-.7*v.ag;
+  v.lapseIn=rr(3,22)/Math.max(v.di*P.distMult,.05);
+  chooseTurn(v); sg.vehs.push(v); vehs.push(v); vehById.set(v.id,v); place(v,1); stats.spawned++; return v;
+}
+function chooseTurn(v){
+  v.sloppy=Math.random()<.3*v.di*P.distMult*(.5+v.ag); v.yStamp=-1;v.stopT=0;v.go=false;v.goKnown=false;v.goHold=0;v.holdT=0;
+  planTurn(v,null);
+  v.needTurn=v2on()&&!v.dest&&v.seg.to.real?1:0;      // v2: the turn head decides at the next tick (until then the provisional turn above stands)
+}
+/* ---------- navigation: user-set destinations, congestion-aware routing and re-routing ---------- */
+const TURN_OF=['S','R',null,'L'], outOf=(sg,t)=>sg.to.out[(sg.k+(t==='S'?0:t==='R'?1:3))%4];
+function jammed(s){let n=0;for(const w of s.vehs){if(w.dp>0||w.crashT>0)return true;if(w.v<.5)n++;}return n*7.5>s.len*s.L*.6;}
+function segCost(s){let c=s.len;for(const w of s.vehs){if(w.v<.5)c+=7;if(w.dp>0||w.crashT>0)c+=90/s.L;}return c;}
+// Dijkstra over directed road segments (no U-turns). ponytail: O(n^2) scan, n <= ~530 segments; use a heap if grids get bigger
+function planRoute(from,dest,avoid){
+  const segs=world.segs,n=segs.length,dist=new Float64Array(n).fill(1e18),prev=new Int32Array(n).fill(-1),done=new Uint8Array(n),T=dest.seg.id;
+  const relax=(sg,base)=>{for(const[dk,pen]of[[0,0],[1,10],[3,28]]){const ns=sg.to.out[(sg.k+dk)%4];if(!ns)continue;
+    const c=base+segCost(ns)+pen+(ns===avoid?500:0);if(c<dist[ns.id]){dist[ns.id]=c;prev[ns.id]=sg.id;}}};
+  if(!from.to.real)return null; relax(from,0);
+  for(;;){let b=-1,bd=1e18;for(let i=0;i<n;i++)if(!done[i]&&dist[i]<bd){bd=dist[i];b=i;}
+    if(b<0)return null; if(b===T)break; done[b]=1; if(segs[b].to.real)relax(segs[b],bd);}
+  const path=[];let i=T;do{path.push(segs[i]);i=prev[i];}while(i!==from.id&&i>=0&&path.length<=n);
+  return path.reverse();
+}
+function planTurn(v,avoid){
+  const sg=v.seg; v.route=null;
+  if(!sg.to.real){v.turn='S';return;}
+  if(v.dest){
+    if(sg===v.dest.seg&&v.s<v.dest.s){v.turn='S';return;}
+    const r=planRoute(sg,v.dest,avoid);
+    if(r&&r.length&&TURN_OF[(r[0].k-sg.k+4)%4]){v.route=r;v.turn=TURN_OF[(r[0].k-sg.k+4)%4];return;}
+  }
+  let t='S';
+  if(P.aiMode===MODES[4]){                           // IDM + greedy turns: take the exit with the shortest queue (ties at random)
+    let bq=1e9;for(const c of'SLR'){const q=qFill(outOf(sg,c))+Math.random()*.02;if(q<bq){bq=q;t=c;}}
+    v.turn=t;return;
+  }
+  // free roaming: random turn, steering away from jammed exits
+  for(let i=0;i<4;i++){const r=Math.random();t=r<.55?'S':r<.77?'L':'R';const so=outOf(sg,t);if(so!==avoid&&!jammed(so))break;}
+  v.turn=t;
+}
+function reroute(v){                               // planned exit is jammed: try another way while lanes can still be chosen
+  const sg=v.seg; if(v.mode!=='seg'||!sg.to.real||v.boxNode||sg.len-v.s<POCK+8||v.lane<0||v.lane>=sg.L)return;
+  if(P.aiMode===MODES[4]||(v2on()&&!v.dest))return;      // greedy / v2: the exit was chosen deliberately on entering the segment
+  if(v.dest&&sg===v.dest.seg&&v.s<v.dest.s)return;
+  const so=outOf(sg,v.turn); if(!jammed(so))return;
+  const old=v.turn; planTurn(v,so); if(v.turn!==old){stats.reroutes++;v.go=false;v.goKnown=false;}
+}
+function setDest(v,x,z){
+  let best=null,bd=30,bs=0;
+  for(const sg of world.segs){ if(!sg.from.real)continue;
+    const px=x-sg.ox,pz=z-sg.oz,al=px*sg.dx+pz*sg.dz,off=px*sg.rx+pz*sg.rz,hi=MED+sg.L*LW+STRIP;
+    const d=hyp(al<0?-al:al>sg.len?al-sg.len:0,off<0?-off:off>hi?off-hi:0); if(d<bd){bd=d;best=sg;bs=al;}}
+  if(!best){msg('Click on a road to set a destination',1.5);return;}
+  const ds=clamp(bs,10,Math.max(11,best.len-18)),o=laneOff(best.L,best.L-1);
+  v.dest={seg:best,s:ds,x:best.ox+best.dx*ds+best.rx*o,z:best.oz+best.dz*ds+best.rz*o};
+  if(v.mode==='seg'&&!v.boxNode&&(!v.seg.to.real||v.seg.len-v.s>14)){planTurn(v,null);v.go=false;v.goKnown=false;}
+  msg('Destination set for vehicle #'+v.id,1.5);
+}
+// evasive manoeuvre under emergency braking: full emergency lane change when the next lane is free, otherwise a partial swerve; inside a junction the car jinks off its line
+function evade(v,o){
+  const rx=-v.fz,rz=v.fx,lat=(o.x-v.x)*rx+(o.z-v.z)*rz,lv=o.vx*rx+o.vz*rz;
+  const away=-(Math.abs(lv)>.4?Math.sign(lv):Math.sign(lat)||(Math.random()<.5?1:-1));     // steer behind a crossing agent, else away from its side
+  v.soft=false;
+  if(v.mode==='junc'){v.jT=away*1.1;v.swT=1.4;stats.swerves++;return;}
+  const sg=v.seg,L=sg.L; if(v.latT!=null||v.byp||v.laneOld!==v.lane||v.lane<0||v.lane>=L)return;
+  for(const dir of[away,-away]){
+    const tl=v.lane+dir; if(sg.vehs.some(w=>w!==v&&(w.lane===tl||w.laneOld===tl)&&w.s>v.s-9&&w.s<v.s+13))continue;
+    if(tl>=0&&tl<L&&sg.len-v.s>18){v.laneOld=v.lane;v.lane=tl;v.ind=dir<0?-1:1;v.swT=1.3;v.lcCool=4;stats.swerves++;return;}
+    const t=clamp(v.lane+dir*.45,-.12,L-1+(sg.parking?.12:.6)); if(Math.abs(t-v.lane)>.2){v.latT=t;v.swT=1.3;stats.swerves++;return;}
+  }
+}
+function removeVeh(v){
+  if(!v.alive)return; v.alive=false;
+  let i=v.seg.vehs.indexOf(v); if(i>=0)v.seg.vehs.splice(i,1);
+  if(v.boxNode){i=v.boxNode.box.indexOf(v);if(i>=0)v.boxNode.box.splice(i,1);}
+  hideVeh(vparts,v.slot); vehFree.push(v.slot);
+  i=vehs.indexOf(v); if(i>=0){vehs[i]=vehs[vehs.length-1];vehs.pop();} vehById.delete(v.id);
+  if(P.aiMode===MODES[3]||brain.train2)brain.gone.push(v.id,v.rw);              // RL: close this car's trajectory with its final reward
+  if(sel===v)select(null);
+}
+function idm(v,sp,v0,gap,vl){
+  const a=v.amax,b=Math.min(v.b,.6*W.mu*GRAV),free=Math.max(1-Math.pow(sp/Math.max(v0,.1),4),-2);
+  if(gap>=1e8)return a*free;
+  const ss=v.s0+Math.max(0,sp*v.T*asF(v)*(1.6-.6*W.mu/.85)+sp*(sp-vl)/(2*Math.sqrt(a*b))),g=Math.max(gap,.1);
+  return a*(free-ss*ss/(g*g));
+}
+// field-of-view zones: 110deg primary cone, peripheral, B/C-pillar blind spot, side mirrors, rear-view mirror
+function fovZone(v,x,z){
+  const dx=x-v.x,dz=z-v.z,d=hyp(dx,dz),R=PR*W.pr,ang=Math.abs(Math.atan2(-dx*v.fz+dz*v.fx,dx*v.fx+dz*v.fz))*57.2958;
+  if(ang<=55*W.ff)return d<R?'fov':null; if(ang<=100)return d<R*.4?'periph':null;
+  if(ang<135)return d<R*.3?'blind':null; if(ang<160)return d<R*.5?'mirror':null; return d<R*.55?'rear':null;
+}
+function findLead(v){
+  let best=null,bg=PR*W.pr;
+  if(v.mode==='seg'){
+    const sg=v.seg,lc=v.laneOld!==v.lane;
+    for(const w of sg.vehs){
+      if(w===v||w===v.ignore)continue; const d=w.s-v.s; if(d<=0)continue;
+      if(w.lane!==v.lane&&w.laneOld!==v.lane&&!(lc&&(w.lane===v.laneOld||w.laneOld===v.laneOld)))continue;
+      const g=d-(w.len+v.len)/2; if(g<bg){bg=g;best=w;}
+    }
+    if(!best&&sg.to.real){
+      const dEnd=sg.len-v.s;
+      if(dEnd<bg){
+        const c=getCurve(sg.to,sg.k,turnLane(v),v.turn);
+        for(const w of sg.to.box){if(w===v||w.mode!=='junc'||w.curve!==c)continue;const g=dEnd+w.u-(w.len+v.len)/2;if(g<bg){bg=g;best=w;}}
+        if(!best)for(const w of c.so.vehs){if(w.lane!==c.ol&&w.laneOld!==c.ol)continue;const g=dEnd+c.len+w.s-(w.len+v.len)/2;if(g<bg){bg=g;best=w;}}
+      }
+    }
+  }else{
+    const c=v.curve;
+    for(const w of v.boxNode.box){if(w===v||w.mode!=='junc'||w.curve!==c||w.u<=v.u)continue;const g=w.u-v.u-(w.len+v.len)/2;if(g<bg){bg=g;best=w;}}
+    if(!best)for(const w of c.so.vehs){if(w===v||(w.lane!==c.ol&&w.laneOld!==c.ol))continue;const g=c.len-v.u+w.s-(w.len+v.len)/2;if(g<bg){bg=g;best=w;}}
+  }
+  v.lead=best; v.gap=best?bg:1e9;
+}
+function pathPt(v,d,out,raw){                     // point on the planned path, d metres ahead of the vehicle centre (raw: without the junction detour offset)
+  let c,u;
+  if(v.mode==='seg'){
+    const sg=v.seg,s2=v.s+d;
+    if(s2<=sg.len||!sg.to.real){const tg=v.latT!=null?v.latT:v.lane,o=laneOff(sg.L,lerp(v.laneF,tg,Math.min(1,d/(v.byp||v.tightO?Math.max(4,Math.abs(laneOff(sg.L,tg)-laneOff(sg.L,v.laneF))/.5):14))));
+      out.x=sg.ox+sg.dx*s2+sg.rx*o;out.z=sg.oz+sg.dz*s2+sg.rz*o;out.tx=sg.dx;out.tz=sg.dz;return out;}
+    c=getCurve(sg.to,sg.k,turnLane(v),v.turn);u=s2-sg.len;
+  }else{c=v.curve;u=v.u+d;}
+  if(u<=c.len)curvePt(c,u,out);
+  else{const so=c.so,o=laneOff(so.L,c.ol),s=u-c.len; out.x=so.ox+so.dx*s+so.rx*o;out.z=so.oz+so.dz*s+so.rz*o;out.tx=so.dx;out.tz=so.dz;}
+  if(v.mode==='junc'&&!raw){const tg=v.det?v.det.off:v.swT>0?v.jT:0,f=lerp(v.jOff,tg,Math.min(1,d/Math.max(3,Math.abs(tg-v.jOff)/.6)));out.x-=out.tz*f;out.z+=out.tx*f;}
+  return out;
+}
+// forward path scan through the spatial hash: pedestrians, crossing vehicles, the player, crashed cars ... anything not handled by lane-following
+function scan(v){
+  const tight=v.creep>0,range=Math.min(PR*W.pr,13+v.v*3),hw=v.wid/2+(tight?.05:.35);let hit=null,hd=0,hv=0;
+  for(let d=v.len/2+.8;d<range&&!hit;d+=2.2){
+    pathPt(v,d,_p); const l=hashNear(_p.x,_p.z,5.5);
+    for(let i=0;i<l.length;i++){
+      const a=l[i]; if(a===v||a===v.ignore||a===v.lead||a.parked)continue;
+      if(a.kind==='veh'&&!a.isPlayer&&a.mode==='seg'&&v.mode==='seg'&&a.seg===v.seg&&a.lane===v.lane&&a.s>v.s)continue;
+      let m=hw; if(a.kind==='ped'){if(!a.inRoad)continue;m=hw+1;}
+      let q=obbDist(a,_p.x,_p.z);
+      if(q>=m&&!tight&&(a.kind==='ped'||a.isPlayer||a.mode==='junc')){const tt=d/Math.max(v.v,2.5);q=obbDist(a,_p.x-a.vx*tt,_p.z-a.vz*tt);}   // anticipate crossing agents
+      if(q>=m)continue;
+      const zn=fovZone(v,a.x,a.z); if(zn===null||(zn!=='fov'&&Math.random()<.35))continue;      // outside (weather-degraded) perception, or missed in the periphery
+      hit=a;hd=Math.max(d-v.len/2-.6,.05);hv=Math.max(0,a.vx*_p.tx+a.vz*_p.tz);break;
+    }
+    if(v.dbg&&(P.paths||sel===v)){const x=_p.x,z=_p.z;v.rays.push(x-_p.tz*.5,z+_p.tx*.5,x+_p.tz*.5,z-_p.tx*.5,4);}
+  }
+  v.obs=hit;v.obsD=hit?hd:1e9;v.obsV=hv;
+  if(v.dbg&&hit)v.rays.push(v.x,v.z,hit.x,hit.z,1);
+}
+function perceive(v,lapsed){
+  v.dbg=P.rays||P.paths||sel===v; v.rays.length=0;
+  scan(v);
+  if(v.dbg&&v.lead)v.rays.push(v.x,v.z,v.lead.x,v.lead.z,0);
+  const sg=v.seg,o=v.obs;
+  // proactive dodge: an obstacle that only clips the path (standing / receding pedestrian, stopped car sticking out) is passed with a lateral shift instead of a stop
+  if(o&&!lapsed&&v.mode==='seg'&&v.latT==null&&!v.byp&&v.laneOld===v.lane&&v.lane>=0&&v.lane<sg.L&&sg.len-v.s>16){
+    const rx=-v.fz,rz=v.fx,lat=(o.x-v.x)*rx+(o.z-v.z)*rz,lv=o.vx*rx+o.vz*rz,ped=o.kind==='ped';
+    if(Math.abs(lat)>.35&&(ped?(Math.abs(lv)<.3||lv*lat>0):hyp(o.vx,o.vz)<.5)){
+      const oh=ped?.35:Math.abs(o.fx*rx+o.fz*rz)*o.len/2+Math.abs(o.fx*v.fx+o.fz*v.fz)*o.wid/2;
+      const sh=(v.wid/2+oh+(ped?1.25:.6)-Math.abs(lat)+.15)/LW,dir=-Math.sign(lat),tl=v.lane+dir;
+      const room=sg.vehs.some(w=>w!==v&&(w.lane===tl||w.laneOld===tl)&&w.s>v.s-32&&w.s<v.s+18)?(v.len>6?0:((LW-v.wid)/2-.2)/LW):.5;
+      const t=clamp(v.lane+dir*sh,v.s>POCK&&sg.len-v.s>POCK?-.35:-.12,sg.L-1+(sg.parking?.12:.6));
+      if(sh>0&&sh<=room&&Math.abs(t-v.lane)>=sh-.02&&v.obsD>sh*LW/.25+v.s0){v.latT=t;v.swT=2.2;v.soft=true;if(v.lastDodge!==o){v.lastDodge=o;stats.dodges++;}}
+    }
+  }
+  if(o&&!lapsed&&v.mode==='junc'&&!v.det&&(o.isPlayer||o.crashT>0)&&hyp(o.vx,o.vz)<.3&&v.v<.6&&v.stuckT>1.2&&aiNudge(v))juncDetour(v,o);
+  if(!lapsed&&v.mode==='seg'&&sg.to.real&&!v.boxNode){
+    const dEnd=sg.len-v.s,dF=dEnd-v.len/2;
+    if(dEnd<14){if(v.lane===-1)v.turn='L';else if(v.lane===sg.L)v.turn='R';else v.turn='S';}      // committed to the lane's movement
+    if(dF<Math.max(10,v.v*v.v/3+14)+12){
+      if(!(v.go&&v.goHold>0)){const g=mayEnter(v,dF);if(g&&!v.go)v.goHold=1.5;v.go=g;}
+      v.goKnown=true;
+    }
+  }
+}
+/* MOBIL lane-change decision with mirror / blind-spot perception */
+function nbrs(sg,lane,s,self){let ln=null,fn=null,dl=1e9,df=1e9;
+  for(const w of sg.vehs){if(w===self||(w.lane!==lane&&w.laneOld!==lane))continue;const d=w.s-s;if(d>=0){if(d<dl){dl=d;ln=w;}}else if(-d<df){df=-d;fn=w;}}
+  if(sg.from.real)for(const w of sg.from.box){                    // vehicles still inside the upstream junction but heading for this lane
+    if(w===self||w.mode!=='junc'||w.curve.so!==sg||w.curve.ol!==lane)continue;const d=s+w.curve.len-w.u;if(d<df){df=d;fn=w;}}
+  return[ln,fn,df];}
+function mobil(v){
+  const sg=v.seg,L=sg.L,dEnd=sg.len-v.s,toR=sg.to.real;
+  if(v.laneOld!==v.lane||v.byp||v.latT!=null)return;
+  const ld=v.lead; let ob=null;                    // stationary obstacle in the way: double-parked / crashed / arrived vehicle, or the stopped player (car or on foot)
+  if(ld&&(ld.dp>0||ld.crashT>0)&&ld.mode==='seg'&&ld.seg===sg&&v.gap<16&&v.v<1.5)ob=ld;
+  else{const o=v.obs;if(o&&(o.isPlayer||o.crashT>0||o.dp>0)&&hyp(o.vx,o.vz)<.3&&v.v<1&&v.stuckT>1.2&&v.obsD<16)ob=o;}
+  let obS=ob?(ob.x-sg.ox)*sg.dx+(ob.z-sg.oz)*sg.dz:0;
+  if(ob&&toR&&obS>sg.len-2&&!v.go)ob=null;                                   // it sits beyond the stop line and we have no right of way yet
+  const blocked=!!ob,obO=ob?(ob.x-sg.ox)*sg.rx+(ob.z-sg.oz)*sg.rz:0;
+  const obH=!ob?0:ob.kind==='ped'?.3:Math.abs(ob.fx*sg.rx+ob.fz*sg.rz)*ob.len/2+Math.abs(ob.fx*sg.dx+ob.fz*sg.dz)*ob.wid/2;    // its lateral half extent
+  const ap=aiP(v),nudge=aiNudge(v);
+  if(v.lane<0||v.lane>=L){if(blocked&&nudge)tryDetour(v,ob,obS,obO,obH);return;}
+  if(toR&&dEnd<v.v*2.6+7&&!blocked)return;
+  const inPZ=toR&&dEnd<POCK-2; let want=null,dW=dEnd;
+  if(v.dest&&v.dest.seg===sg&&v.s<v.dest.s){want=L-1;dW=v.dest.s-v.s;}          // pull over to the kerb side at the destination
+  else if(toR&&v.turn==='L')want=inPZ?-1:0; else if(toR&&v.turn==='R')want=inPZ?L:L-1;
+  const mand=want!==null&&want!==v.lane&&dW<75+40*Math.abs(v.lane-want);
+  if(!mand&&!blocked&&(v.lcCool>0||v.v<1.5))return;
+  const aCur=idm(v,v.v,v.v0c,v.gap,ld?ld.v:0),bSafe=Math.min(2.2+3*v.ag,.4*W.mu*GRAV+.2),hwF=.22*.85/W.mu;   // min time headway left to the new follower grows on slippery roads
+  let bestC=null,bestI=-1e9,bestCut=null;
+  const pref=lanePref(v),lcOK=!ap||mand||ap[3]>=.15||pref!==0||(blocked&&v.stuckT>6);        // AI: discretionary lane changes need the OVERTAKE_MERGE intent or a v2 lane request
+  for(const dir of lcOK?[-1,1]:[]){
+    const c=v.lane+dir; if(mand&&!blocked&&Math.sign(want-v.lane)!==dir)continue;
+    if(pref!==0&&dir!==pref&&!mand&&!blocked&&!(ap&&ap[3]>=.15))continue;      // v2 asked for the other side
+    if(!((c>=0&&c<L)||(c===want&&inPZ)))continue;
+    if(ob&&Math.abs(laneOff(L,c)-obO)<obH+v.wid/2+.4)continue;           // that lane is obstructed too
+    const[ln,fn,df]=nbrs(sg,c,v.s,v);
+    const gapL=ln?ln.s-v.s-(ln.len+v.len)/2:1e9,gapF=fn?df-(fn.len+v.len)/2:1e9;
+    if(gapL<1.5+(W.mu<.5?v.v*.3:0))continue;
+    // mirror check + shoulder (head) check: a follower hidden in the blind spot is only seen if the driver turns the head
+    let see=true;
+    if(fn){const zn=fovZone(v,fn.x,fn.z),m=v.see[dir<0?0:1];
+      if(m.fn!==fn||m.zn!==zn||simT>m.until){m.fn=fn;m.zn=zn;m.until=simT+5;
+        const care=W.mu/.85;                              // drivers check more carefully on slippery roads
+        m.val=zn==='blind'?Math.random()<clamp(1-(.55*v.di*P.distMult+.25*v.ag)*care,.05,1):(zn==='mirror'||zn==='rear')?Math.random()<1-.25*v.di*P.distMult*care:zn===null?gapF>PR*W.pr*.3:true;}
+      see=m.val;
+      if(v.dbg)v.rays.push(v.x,v.z,fn.x,fn.z,see?2:1);}
+    const aNew=idm(v,v.v,v.v0c,gapL,ln?ln.v:0); let dFol=0,cut=null;
+    if(aNew<-bSafe)continue;                         // would have to brake too hard behind the new leader
+    if(fn&&see){if(gapF<1.2+fn.v*hwF)continue;const aF=idm(fn,fn.v,fn.v0c,gapF,v.v);if(aF<-bSafe)continue;dFol=Math.min(0,aF-fn.acc);}
+    else if(fn&&!see&&gapF<1.5)continue;            // physically alongside – even a careless driver feels that
+    else if(fn&&!see&&idm(fn,fn.v,fn.v0c,gapF,v.v)<-2.5)cut=fn;
+    const inc=mand&&!blocked?10:aNew-aCur+(.5-.45*v.ag)*dFol+(dir>0?.08:0)+(blocked?4:0);
+    if(inc>bestI){bestI=inc;bestC=c;bestCut=cut;}
+  }
+  if(bestC!==null&&(mand||bestI>(pref!==0?-.3:ap&&ap[3]>=.4?.05:.35+.35*(1-v.ag)))){
+    v.laneOld=v.lane;v.ind=bestC<v.lane?-1:1;v.lane=bestC;v.lcCool=3+2*(1-v.ag);v.tightO=ob;v.revD=0;
+    if(bestCut){stats.cutoffs++;reward(v,-RW.cutoff);bestCut.honkT=.9;stats.honks++;honk(bestCut);}
+    return;
+  }
+  if(blocked&&nudge)tryDetour(v,ob,obS,obO,obH);    // no proper lane change possible: plan an own path around it
+}
+/* ---------- free-form detours: the driver plans an own path around a stationary obstacle, giving way to everybody whose space it borrows ---------- */
+const offToLane=(L,o)=>o<0?o/LW-1:o<MED+LW/2?o/(MED+LW/2)-1:o<=MED+(L-.5)*LW?(o-MED)/LW-.5:L-1+Math.min(1,(o-MED-(L-.5)*LW)/(LW/2+STRIP/2));   // inverse of laneOff
+function onRoad(x,z,m){const w=world,i=Math.round(x/SP+w.N/2),j=Math.round(z/SP+w.M/2);
+  return(i>=0&&i<=w.N&&Math.abs(x-w.nx(i))<w.HWv-m)||(j>=0&&j<=w.M&&Math.abs(z-w.nz(j))<w.HWh-m);}
+function spotFree(v,x,z,ob){                       // could the car's body be at (x,z)? parked cars, vehicles and pedestrians in the road all count
+  const l=hashNear(x,z,6);
+  for(let i=0;i<l.length;i++){const a=l[i];if(a===v||a===ob||(a.kind==='ped'&&!a.inRoad))continue;if(obbDist(a,x,z)<v.wid/2+.3)return false;}
+  return true;
+}
+function tryDetour(v,ob,obS,obO,obH){              // on a road segment: pass left or right of the obstacle at a free lateral offset
+  const sg=v.seg,L=sg.L,mo=laneOff(L,v.laneF),need=obH+v.wid/2+.6,lo=-(MED+LW)+v.wid/2+.2,hi=MED+L*LW+STRIP/2;
+  const cands=[obO-need,obO+need].filter(c=>c>=lo&&c<=hi).sort((a,b)=>Math.abs(a-mo)-Math.abs(b-mo));
+  const D=Math.max(8,obS-v.s+(ob.len+v.len)/2+5);
+  for(const c of cands){
+    let ok=true;
+    for(const w of sg.vehs){                       // same-direction traffic in the lanes the detour borrows has priority
+      if(w===v||w===ob||Math.abs(laneOff(L,w.laneF)-c)>(w.wid+v.wid)/2+.3)continue;
+      const ds=w.s-v.s;
+      if(ds<-(w.len+v.len)/2-1?(w.v>1&&-ds<w.v*4+8):ds<D+v.len){ok=false;if(v.dbg)v.rays.push(v.x,v.z,w.x,w.z,1);break;}
+    }
+    if(ok&&c-v.wid/2<MED&&!canBypass(v,obS))ok=false;             // median / oncoming side: oncoming traffic has priority
+    for(let d=1.5;ok&&d<D;d+=1.8){const o=lerp(mo,c,Math.min(1,d/6));ok=spotFree(v,sg.ox+sg.dx*(v.s+d)+sg.rx*o,sg.oz+sg.dz*(v.s+d)+sg.rz*o,ob);}
+    if(ok){v.byp=ob;v.revD=0;v.bypNeed=obH+v.wid/2+.3;v.latT=offToLane(L,c);v.ind=c<mo?-1:1;stats.bypasses++;return true;}
+  }
+  return false;
+}
+function juncDetour(v,o){                          // inside a junction: offset the turning path sideways around the obstacle
+  let bd=1e9,bx=0,bz=0,tx=1,tz=0,bD=0;
+  for(let d=0;d<24;d++){pathPt(v,d,_p,true);const q=hyp(o.x-_p.x,o.z-_p.z);if(q<bd){bd=q;bx=_p.x;bz=_p.z;tx=_p.tx;tz=_p.tz;bD=d;}}
+  const rx=-tz,rz=tx,lat=(o.x-bx)*rx+(o.z-bz)*rz,oh=o.kind==='ped'?.3:Math.abs(o.fx*rx+o.fz*rz)*o.len/2+Math.abs(o.fx*tx+o.fz*tz)*o.wid/2;
+  const need=oh+v.wid/2+.65,D=bD+(o.len+v.len)/2+4;
+  for(const c of[lat-need,lat+need].sort((a,b)=>Math.abs(a)-Math.abs(b))){
+    if(Math.abs(c)>6)continue; let ok=true;
+    for(let d=1.5;ok&&d<D;d+=1.6){pathPt(v,d,_p,true);const f=lerp(v.jOff,c,Math.min(1,d/Math.max(3,Math.abs(c-v.jOff)/.6))),x=_p.x-_p.tz*f,z=_p.z+_p.tx*f;ok=onRoad(x,z,v.wid/2)&&spotFree(v,x,z,o);}
+    if(ok){v.det={o,off:c,uO:v.u+bD,ext:o.kind==='ped'?.3:Math.abs(o.fx*tx+o.fz*tz)*o.len/2+Math.abs(o.fx*rx+o.fz*rz)*o.wid/2};v.revD=0;stats.bypasses++;return;}
+  }
+}
+function canBypass(v,obS){
+  const tw=v.seg.twin,so=v.seg.len-obS,tNeed=6.5*(1-.3*v.ag)*W.gf*(v.sloppy?.6:1);let ok=true;
+  for(const w of tw.vehs){ if(w.lane>0&&w.laneOld>0)continue;
+    const d=so+10-w.s; if(d<-14)continue;            // already past the obstacle
+    const bad=d<w.v*tNeed+22; if(bad)ok=false; if(v.dbg)v.rays.push(v.x,v.z,w.x,w.z,bad?1:2);
+  }
+  return ok;
+}
+function place(v,k){                               // world pose from track coordinates; k = heading blend
+  let tx,tz,x,z,px,pz;                             // (px,pz): path tangent
+  if(v.mode==='seg'){const sg=v.seg,o=laneOff(sg.L,v.laneF);x=sg.ox+sg.dx*v.s+sg.rx*o;z=sg.oz+sg.dz*v.s+sg.rz*o;px=sg.dx;pz=sg.dz;
+    if(v.v>.3){const lv=v.latV||0;tx=sg.dx*v.v+sg.rx*lv;tz=sg.dz*v.v+sg.rz*lv;const n=hyp(tx,tz);tx/=n;tz/=n;}else{tx=v.fx;tz=v.fz;}}
+  else{curvePt(v.curve,Math.max(v.u,0),_p);px=tx=_p.tx;pz=tz=_p.tz;x=_p.x-tz*v.jOff;z=_p.z+tx*v.jOff;
+    if(v.v>.3&&v.jV){const ax=tx*v.v-tz*v.jV,az=tz*v.v+tx*v.jV,n=hyp(ax,az);tx=ax/n;tz=az/n;}}
+  let fx=lerp(v.fx,tx,k),fz=lerp(v.fz,tz,k);const n=hyp(fx,fz)||1;v.fx=fx/n;v.fz=fz/n;
+  const sp=v.rev?-v.revV:v.v,b=v.len*.3;           // b: centre -> rear axle; the rear axle stays on the path, the nose leads the turn
+  v.x=x+(v.fx-px)*b;v.z=z+(v.fz-pz)*b;v.vx=v.fx*sp;v.vz=v.fz*sp;
+}
+const vinfo=a=>a.state+'|'+a.mode+'|'+a.turn+'|v'+a.v.toFixed(1)+'|k'+a.seg.k+'|ln'+a.lane+'/'+a.laneOld+'/'+a.laneF.toFixed(2)+'|'+a.type.n+(a.latT!=null?'|latT'+a.latT:'')+(a.byp?'|BYP':'')+(a.skid?'|SKID':'')+(a.lapseT>0?'|LAPSE':'')+(a.ranRed?'|RANRED':'')+(a.lead?'|lead#'+a.lead.id+'g'+a.gap.toFixed(1):'')+'|#'+a.id;
+function crash(a,b){logEv('crash',{at:(a.boxNode||b.boxNode)?'junction '+(a.boxNode||b.boxNode).type:'mid-block',a:vinfo(a),b:vinfo(b),ds:a.seg===b.seg?+(a.s-b.s).toFixed(1):'-'});const al=a.fx*b.fx+a.fz*b.fz>0,vc=(a.v+b.v)/2;      // inelastic impact: aligned cars carry on at their common speed, crossing ones lose most of it
+  for(const x of[a,b])if(!x.isPlayer){if(!(x.crashT>0)){x.crashT=rr(7,11);x.resume=false;reward(x,-RW.crash);}x.v=al?vc:x.v*.3;}stats.crashes++;}
+function updVeh(v,dt){
+  const sg=v.seg,mu=W.mu,aPhys=mu*GRAV;
+  if(v.honkT>0)v.honkT-=dt;
+  if(v.crashT>0){v.crashT-=dt;v.ind=2;v.brake=true;v.state='CRASHED';v.latV=v.jV=0;
+    if(v.v>0){                                      // slides to rest at about 1.2 g, it does not freeze on the spot
+      v.v=Math.max(0,v.v-12*dt);v.acc=-12;
+      if(v.mode==='seg')v.s=Math.max(v.s,Math.min(v.s+v.v*dt,sg.len-.2));else v.u=Math.max(v.u,Math.min(v.u+v.v*dt,v.curve.len-.2));
+      place(v,Math.min(1,dt*9));
+    }else{v.acc=v.vx=v.vz=0;}
+    if(v.crashT<=0){if(v.resume){v.resume=false;v.ind=0;v.stuckT=0;}else removeVeh(v);}return;}
+  if(v.dp>0){v.dp-=dt;v.v=v.vx=v.vz=0;v.ind=2;v.state=v.arrived?'ARRIVED at destination':'double-parked (delivery)';if(v.dp<=0){v.ind=0;v.stuckT=0;v.arrived=false;}return;}
+  // distraction lapses: perception and control are frozen for 0.3 - 1.8 s
+  if(v.lapseT>0)v.lapseT-=dt;
+  else{v.lapseIn-=dt;if(v.lapseIn<=0){const rate=v.di*P.distMult;if(rate>.02)v.lapseT=rr(.3,1.8);v.lapseIn=rr(6,22)/Math.max(rate,.05);}}
+  const lapsed=v.lapseT>0;
+  if(v.goHold>0)v.goHold-=dt; if(v.lcCool>0)v.lcCool-=dt;
+  findLead(v);
+  v.pT-=dt; if(v.pT<=0){v.pT=.1*W.lat;perceive(v,lapsed);}
+  let v0=P.speedLimit/3.6*v.v0f*W.vf; if(v.gamble>0){v.gamble-=dt;v0*=1.25;}
+  let dEnd=1e9,dF=1e9;
+  if(v.mode==='seg'){dEnd=sg.len-v.s;dF=dEnd-v.len/2;if(sg.to.real&&v.turn!=='S'){const vt=(v.turn==='R'?5:7.5)*Math.min(1,Math.sqrt(mu/.4));v0=Math.min(v0,Math.sqrt(vt*vt+3.2*Math.max(dEnd,0)));}}
+  else if(v.turn!=='S')v0=Math.min(v0,(v.turn==='R'?5.5:8)*Math.min(1,Math.sqrt(mu/.4)));
+  let wantRev=false;
+  if(v.byp){v0=Math.min(v0,5.5);const o=v.byp,oS=(o.x-sg.ox)*sg.dx+(o.z-sg.oz)*sg.dz,oO=(o.x-sg.ox)*sg.rx+(o.z-sg.oz)*sg.rz;
+    if(!o.alive||(o.isPlayer&&!o.active)||hyp(o.vx,o.vz)>1||v.mode!=='seg'||(o.mode==='seg'&&o.seg!==sg)||v.s>oS+(o.len+v.len)/2+2.5){v.byp=null;v.ignore=null;v.latT=null;v.ind=0;}
+    else if(!v.ignore){const rem=v.bypNeed-(laneOff(sg.L,v.laneF)-oO)*(Math.sign(laneOff(sg.L,v.latT)-oO)||1);
+      if(rem<=0){v.ignore=o;v.obs=null;v.obsD=1e9;findLead(v);}                     // laterally clear: now pass it
+      else if(v.v<.3){                             // too close to steer past it: the sideways shift still needed takes forward room (about 2 m ahead per 1 m sideways)
+        const ext=o.kind==='ped'?.3:Math.abs(o.fx*sg.dx+o.fz*sg.dz)*o.len/2+Math.abs(o.fx*sg.rx+o.fz*sg.rz)*o.wid/2;
+        wantRev=oS-ext-(v.s+v.len/2)-v.s0-1.6<rem/.5+(v.rev?1.8:.5);
+      }}}
+  if(v.tightO&&!v.byp){const o=v.tightO;           // lane change around a stationary obstacle: same rules
+    if(v.mode!=='seg'||v.laneOld===v.lane||!o.alive||(o.isPlayer&&!o.active)||hyp(o.vx,o.vz)>1){v.tightO=null;v.ignore=null;}
+    else{const oS=(o.x-sg.ox)*sg.dx+(o.z-sg.oz)*sg.dz,oO=(o.x-sg.ox)*sg.rx+(o.z-sg.oz)*sg.rz,ped=o.kind==='ped';
+      const eL=ped?.3:Math.abs(o.fx*sg.rx+o.fz*sg.rz)*o.len/2+Math.abs(o.fx*sg.dx+o.fz*sg.dz)*o.wid/2,eA=ped?.3:Math.abs(o.fx*sg.dx+o.fz*sg.dz)*o.len/2+Math.abs(o.fx*sg.rx+o.fz*sg.rz)*o.wid/2;
+      const rem=eL+v.wid/2+.3-(laneOff(sg.L,v.laneF)-oO)*(Math.sign(laneOff(sg.L,v.lane)-oO)||1);
+      if(rem<=0){if(!v.ignore){v.ignore=o;v.obs=null;v.obsD=1e9;findLead(v);}}
+      else if(v.v<.3)wantRev=oS-eA-(v.s+v.len/2)-v.s0-1.6<rem/.5+(v.rev?1.8:.5);
+    }}
+  if(v.det){v0=Math.min(v0,3.5);const o=v.det.o;                                   // detour inside a junction
+    if(v.mode!=='junc'||!o.alive||(o.isPlayer&&!o.active)||hyp(o.vx,o.vz)>1||(o.x-v.x)*v.fx+(o.z-v.z)*v.fz<-(o.len+v.len)/2-1.5){v.det=null;v.ignore=null;}
+    else if(!v.ignore&&Math.abs(v.jOff-v.det.off)<.35){v.ignore=o;v.obs=null;v.obsD=1e9;}
+    else if(!v.ignore&&v.v<.3&&v.det.uO!=null){const rem=Math.abs(v.det.off-v.jOff),room=v.det.uO-v.det.ext-(v.u+v.len/2)-v.s0-1.6;wantRev=room<rem/.6+(v.rev?1.8:.5);}}
+  if(v.swT>0&&v.latT!=null)v0=Math.min(v0,7);     // dodging: pass the obstacle slowly
+  if(v.mode==='seg'&&sg.to.real&&!v.boxNode&&v.turn!=='S'&&v.lane!==(v.turn==='L'?-1:sg.L)&&dEnd>14&&dEnd<46){
+    v0=Math.min(v0,Math.max(2.5,(dEnd-10)/2.6));
+    if(v.route&&dEnd<28&&v.holdT<15){v.holdT+=dt;v0=Math.min(v0,Math.max(0,(dEnd-19)*.7));}       // navigating to a destination: hold for a gap into the turn lane
+  }
+  if(v.mode==='seg'&&simT>v.rrT){v.rrT=simT+3+Math.random()*2;reroute(v);}
+  if(v.creep>0){v.creep-=dt;v0=Math.min(v0,2);}
+  v.v0c=v0;
+  const ld=v.lead,standoff=ld&&!v.byp&&!v.tightO&&(ld.dp>0||ld.crashT>0)&&v.mode==='seg'?5:0;      // leave room to steer around a stationary obstacle
+  if(!wantRev&&ld&&ld.rev&&v.gap<(v.revV>0?3.6:2.4)&&v.v<.3&&v.mode==='seg'&&ld.mode==='seg')wantRev=true;      // the car in front is backing up: give it room
+  if(!wantRev&&v.v<.3&&v.obs&&v.obs.kind==='veh'&&hyp(v.obs.vx,v.obs.vz)<.3&&v.obsD<(v.revV>0?1.6:.4))wantRev=true;      // jammed up against a stationary vehicle: back off
+  if(!wantRev&&v.mode==='junc'&&v.v<.3&&v.stuckT>8&&v.revD<5){const q=v.obs;if(q&&q.kind==='veh'&&!q.isPlayer&&q.obs===v&&q.id<v.id)wantRev=true;}   // mutual deadlock in a junction: back off and let the other one out
+  let a=idm(v,v.v,v0,v.gap-standoff,ld?ld.v:0),stopping=false;
+  if(v.mode==='seg'&&sg.to.real&&!v.boxNode&&v.goKnown&&!(v.go&&aiGo(v,dF))&&dF<Math.max(10,v.v*v.v/3+14)){a=Math.min(a,idm(v,v.v,v0,Math.max(dF+v.s0-.8,.05),0));stopping=true;}
+  v.stopping=stopping;
+  let arriving=false;
+  if(v.dest&&v.mode==='seg'&&sg===v.dest.seg&&v.s<v.dest.s){                          // stop at the user-set destination
+    const g=v.dest.s-v.s; a=Math.min(a,idm(v,v.v,v0,Math.max(g+v.s0-.5,.05),0)); arriving=g<45;
+    if(g<3.5&&v.v<.3){v.dest=null;v.route=null;v.dp=8;v.arrived=true;v.ind=2;if(sel===v)msg('Vehicle #'+v.id+' arrived at its destination');}
+  }
+  const useObs=!!v.obs;
+  if(useObs){v.obsD-=(v.v-v.obsV)*dt;const q=v.obs,st=!v.byp&&!v.det&&!v.tightO&&v.latT==null&&(q.isPlayer||q.crashT>0||q.dp>0)&&hyp(q.vx,q.vz)<.3?(v.mode==='seg'?5:3):0;
+    a=Math.min(a,idm(v,v.v,v0,Math.max(v.obsD-st,.05),v.obsV));}
+  // automatic emergency braking (works even through a distraction lapse)
+  let eg=v.gap,ev=v.lead?v.lead.v:0; if(useObs&&v.obsD<eg){eg=v.obsD;ev=v.obsV;}
+  const dv=v.v-ev,wasAeb=v.aeb; v.aeb=eg<1e8&&((dv>.5&&dv*dv/(2*Math.max(eg-1,.25))>Math.min(5.5,.9*aPhys))||(dv>.15&&eg<1.1));
+  if(v.aeb){a=-aPhys*1.3;
+    if(!wasAeb&&v.v>3){const byObs=v.obs&&v.obsD<=v.gap,o=byObs?v.obs:v.lead;
+      stats.aebs++;reward(v,-RW.aeb);if(o&&o.kind==='veh'&&!o.isPlayer&&!o.parked&&o.alive)reward(o,-RW.causeBrake);      // emergency braking, and whoever caused it
+      if(byObs&&v.honkT<=0){v.honkT=.8;stats.honks++;honk(v);}
+      if(o&&!lapsed)evade(v,o);}}                     // swerve / emergency lane change around the car or pedestrian
+  else if(lapsed)a=v.accHeld; else v.accHeld=a;
+  if(v.dpReq&&v.mode==='seg'&&!v.boxNode&&(dEnd>POCK||!sg.to.real)){a=Math.min(a,-2.4);if(v.v<.3){v.dp=v.dpReq;v.dpReq=0;v.ind=2;}}   // told to double-park here
+  a=Math.min(a,v.amax*(v.gamble>0?1.6:1),aPhys*.7);
+  v.abs=a<-aPhys&&v.v>2; a=Math.max(a,-aPhys);
+  a=clamp(a,v.acc-(v.aeb?60:22)*dt,v.acc+35*dt);                  // jerk limit: brake pressure builds over ~0.15 s (emergency) to ~0.4 s, it is not a switch
+  if(v.v<=0&&a<-.5)a=-.5;                                          // standing still: no brake wind-up
+  // reverse gear: back straight up while the space behind is free (never into the junction behind, at most 10 m)
+  v.rev=false;
+  if(wantRev&&v.v<.05&&v.revD<10&&(v.mode==='seg'?v.s-v.len/2>3:v.u>.6)&&spotFree(v,v.x-v.fx*(v.len/2+1.1),v.z-v.fz*(v.len/2+1.1),null)){
+    if(!v.revV)stats.reverses++;
+    v.rev=true;v.revV=Math.min(1.6,v.revV+1.5*dt);v.revD+=v.revV*dt;a=0;v.v=0;}
+  else{v.revV=0;if(v.v>1.5)v.revD=0;}
+  v.acc=a; v.v=Math.max(0,v.v+a*dt); const ds=v.rev?-v.revV*dt:v.v*dt;
+  reward(v,RW.progress*ds-(v.v<.3?RW.wait*dt:0));                 // route progress minus waiting
+  v.brake=a<-.7||(v.v<.2&&(stopping||v.lead!=null));
+  v.shake=v.abs?Math.sin(simT*70+v.id)*.035:0;
+  if(v.v<.3){if(v.mode==='seg'&&dF<5)v.stopT+=dt;v.waitT+=dt;v.stuckT+=dt;
+    const o=v.obs;if(v.mode==='junc'&&v.stuckT>5&&v.creep<=0&&o&&o.kind==='veh'&&!(o.obs===v&&o.id<v.id))v.creep=3;      // mutual yielding: one of the pair edges through
+    if(v.stuckT>(v.mode==='junc'&&!(o&&o.isPlayer)?45:150)){stats.stuck++;logEv('towed',{v:vinfo(v),obs:o?(o.kind==='veh'&&!o.isPlayer?vinfo(o):o.kind):'-',why:v.why});removeVeh(v);return;}
+    if(v.lead&&v.lead.go&&v.lead.v<.3&&v.lead.lapseT>0&&v.honkT<=0&&v.waitT>2&&Math.random()<dt){v.honkT=.6;stats.honks++;honk(v);}
+  }else{v.stuckT=0;if(v.v>3)v.waitT=0;}
+  // lateral motion
+  if(v.swT>0){v.swT-=dt;if(v.swT<=0)v.latT=null;}
+  if(v.mode==='seg'){
+    v.mobT-=dt; if(v.mobT<=0&&!lapsed&&!v.rev){v.mobT=.4;mobil(v);}
+    const tgt=v.latT!=null?v.latT:v.lane,old=v.laneF;
+    if(v.abs&&mu<.5&&v.v>4){                                        // skid on wet / icy surface: some ABS stops break traction and drift sideways
+      if(!v.skid)v.skid=Math.random()<.45?(Math.random()<.5?-1:1):2;
+      if(v.skid!==2)v.laneF=clamp(v.laneF+v.skid*dt*.25*(1.1-mu*2),Math.min(v.laneF,Math.max(tgt-.16,-1)),Math.max(v.laneF,tgt+.16));}
+    else{v.skid=0;const hard=v.swT>0&&!v.soft,rem=Math.abs(laneOff(sg.L,tgt)-laneOff(sg.L,v.laneF)),lf=Math.min(1,4.6/v.len),
+      tm=v.byp||v.tightO,slip=Math.min((hard?.45:tm?.5:.3)*lf,rem/(hard?3:tm?2.5:6)+.025),      // tan(heading - road direction): sideways speed is tied to forward speed, no crabbing
+      rate=Math.min(hard?1.2:1/(2.6-1.3*v.ag),slip*v.v/LW),d=tgt-v.laneF;
+      if(d!==0){                                                   // never steer into a vehicle that is alongside
+        const dir=Math.sign(d),mo=laneOff(sg.L,v.laneF);let hold=false;
+        for(const w of sg.vehs){if(w===v||w===v.ignore||Math.abs(w.s-v.s)>(w.len+v.len)/2+.4)continue;const sep=(laneOff(sg.L,w.laneF)-mo)*dir;if(sep>0&&sep<(w.wid+v.wid)/2+.35){hold=true;break;}}
+        if(!hold)v.laneF+=clamp(d,-rate*dt,rate*dt);
+      }}
+    v.latV=(laneOff(sg.L,v.laneF)-laneOff(sg.L,old))/dt;
+    if(v.laneOld!==v.lane&&Math.abs(v.laneF-v.lane)<.06){v.laneOld=v.lane;if(!v.byp)v.ind=0;}
+    v.s+=ds;
+    if(sg.to.real){
+      if(!v.boxNode&&v.s+v.len/2>sg.len){                         // front bumper over the stop line: committed
+        const n=sg.to; v.boxNode=n;n.box.push(v);v.turn=v.lane===-1?'L':v.lane===sg.L?'R':'S';v.mv=sg.k*3+TI[v.turn];
+        if(n.type==='sig'&&(v.turn==='L'?n.sl[sg.k]:n.st[sg.k])==='R'&&(v.turn==='R'&&v.stopT>=1?(stats.rtor++,false):true)){stats.redRuns++;v.ranRed=true;reward(v,-RW.red);}
+      }
+      if(v.s>=sg.len){                                            // enter junction curve
+        sg.vehs.splice(sg.vehs.indexOf(v),1); const ln=turnLane(v);
+        v.jOff=laneOff(sg.L,v.laneF)-laneOff(sg.L,ln); v.curve=getCurve(sg.to,sg.k,ln,v.turn); v.u=v.s-sg.len; v.mode='junc'; v.ind=v.turn==='L'?-1:v.turn==='R'?1:0;
+        v.det=v.byp&&v.ignore?{o:v.byp,off:v.jOff}:null;if(!v.det)v.ignore=null;      // keep going around an obstacle that sits in the junction
+        v.latT=null;v.swT=0;v.jT=0;v.byp=null;v.tightO=null;v.laneOld=v.lane;
+      }
+    }else if(v.s>=sg.len){stats.exits++;removeVeh(v);return;}
+  }else{
+    v.u+=ds; {const tg=v.det?v.det.off:v.swT>0?v.jT:0,rt=Math.min((v.det?.6:v.swT>0?.45:.35)*Math.min(1,4.6/v.len),Math.abs(tg-v.jOff)/3+.03)*v.v,old=v.jOff;v.jOff+=clamp(tg-v.jOff,-rt*dt,rt*dt);v.jV=(v.jOff-old)/dt;}
+    if(v.u>=v.curve.len){const c=v.curve;v.seg=c.so;v.s=v.u-c.len;v.lane=v.laneOld=c.ol;v.laneF=c.ol+v.jOff/LW;v.mode='seg';v.curve=null;v.ind=0;v.lcCool=1.5;v.ranRed=false;c.so.vehs.push(v);chooseTurn(v);
+      if(v.det){v.byp=v.det.o;v.bypNeed=0;v.latT=v.laneF;v.det=null;}}
+  }
+  if(v.boxNode&&v.mode==='seg'&&v.seg.from===v.boxNode&&v.s>v.len/2+1){const b=v.boxNode.box;b.splice(b.indexOf(v),1);v.boxNode=null;v.mv=-1;}
+  place(v,Math.min(1,dt*9));
+  v.state=v.aeb?'AEB - emergency braking':v.abs?'ABS / skid':lapsed?'DISTRACTED (lapse)':v.rev?'REVERSING to make room':v.byp||v.det?'going around obstacle (own path)':v.swT>0&&(v.latT!=null||v.jT)?'swerving / dodging':arriving?'arriving at destination':v.laneOld!==v.lane?'changing lane':v.mode==='junc'?'in junction ('+v.turn+')':useObs&&v.obsD<v.gap&&a<-.3?(v.obs.kind==='ped'?'yielding to pedestrian':v.obs.isPlayer?'braking for player vehicle':'braking for crossing vehicle'):stopping?(v.why||'stopping'):v.lead&&v.gap<25?'following':'cruising';
+}
+function hitPlayer(v,c){if(v.v>1.5&&!(v.crashT>0)&&obbHit(v,c,.95)){v.crashT=rr(4,7);v.resume=true;v.v*=.5;stats.crashes++;reward(v,-RW.crash);msg('A car ran into you');}}
+function playerCollide(){const c=player.car;if(!c.active)return;const l=hashNear(c.x,c.z,9);for(let j=0;j<l.length;j++){const v=l[j];if(v.kind==='veh'&&!v.parked&&!v.isPlayer&&v.alive)hitPlayer(v,c);}}
+function collide(){                                 // main-thread fallback; normally the worker does this
+
+  for(let i=vehs.length-1;i>=0;i--){
+    const v=vehs[i]; if(!v)continue; const l=hashNear(v.x,v.z,8);
+    for(let j=0;j<l.length;j++){
+      const a=l[j]; if(a.kind!=='veh'||a.parked||!a.alive)continue;
+      if(a.isPlayer){hitPlayer(v,a);continue;}
+      if(a.id<=v.id||(v.crashT>0&&a.crashT>0))continue;
+      if(hyp(a.x-v.x,a.z-v.z)<(a.len+v.len)/2+.5&&obbHit(v,a,(v.mode==='junc'&&v.turn!=='S')||(a.mode==='junc'&&a.turn!=='S')?.8:.92)){crash(v,a);break;}
+    }
+  }
+}
+let dpT=4;
+function spawnTraffic(dt){
+  const w=world,lam=P.carRate/60,cap=Math.min(P.maxCars,MAXV-4,w.laneKm*30);
+  for(const e of w.entries){
+    e.spawnT-=dt; if(e.spawnT>0)continue; e.spawnT=lam>0?-Math.log(1-Math.random())/lam:2;
+    if(lam<=0||vehs.length>=cap)continue; const lane=(Math.random()*e.L)|0;
+    if(e.vehs.some(v=>v.s<18&&(v.lane===lane||v.laneOld===lane)))continue;
+    spawnVeh(e,4,lane,{v:7});
+  }
+  dpT-=dt;
+  if(dpT<=0){dpT=rr(.6,1.4)*P.dpEvery;
+    if(vehs.reduce((a,v)=>a+(v.dp>0&&!v.arrived?1:0),0)<P.doubleParked){
+      const c=w.segs.filter(s=>s.from.real&&s.to.real),sg=c[(Math.random()*c.length)|0];
+      if(!sg.vehs.some(v=>v.dp>0))spawnDP(sg,rr(32,sg.len-POCK-8));
+    }
+  }
+}
+// double-parked vehicle: lane, type and duration come from the control panel
+function spawnDP(sg,s){
+  const ln=P.dpLane==='Kerb lane'?sg.L-1:P.dpLane==='Centre lane'?0:(Math.random()*sg.L)|0;
+  if(sg.vehs.some(v=>(v.lane===ln||v.laneOld===ln)&&v.s>s-30&&v.s<s+12))return null;
+  const t=P.dpType==='Random'?pickType(Math.random()):VT[['Car','SUV','Van','Truck'].indexOf(P.dpType)],v=spawnVeh(sg,s,ln,{type:t});
+  if(v){v.dp=rr(Math.min(P.dpMin,P.dpMax),Math.max(P.dpMin,P.dpMax));if(t===VT[2])v.col=[.93,.93,.9];v.ind=2;}
+  return v;
+}
+function seedTraffic(){
+  const w=world,n=Math.min(P.maxCars*.6,w.laneKm*14*Math.min(1.5,P.carRate/10));
+  for(let i=0,t=0;i<n&&t<n*6;t++){
+    const sg=w.segs[(Math.random()*w.segs.length)|0],lane=(Math.random()*sg.L)|0,s=rr(8,sg.len-12);
+    if(sg.vehs.some(v=>v.lane===lane&&Math.abs(v.s-s)<15))continue;
+    spawnVeh(sg,s,lane,{v:rr(2,8)});i++;
+  }
+}
+
+/* ============================== PEDESTRIANS ============================== */
+const peds=[],pedFree=[]; for(let i=MAXP-2;i>=0;i--)pedFree.push(i);          // slot MAXP-1 is reserved for the player
+const pparts={body:new Inst(GEO.box,MAT.paint,MAXP,true),head:new Inst(GEO.head,MAT.skin,MAXP,false),leg:new Inst(GEO.box,MAT.glass,MAXP*2,false)};
+function spawnPed(){
+  const we=world.walkEdges; if(!pedFree.length||!we.length)return null; const e=we[(Math.random()*we.length)|0];
+  const p={kind:'ped',id:++vid,slot:pedFree.pop(),alive:true,len:.5,wid:.5,x:0,z:0,fx:1,fz:0,vx:0,vz:0,v:0,
+    sp:rr(1.15,1.65),imp:Math.random(),edge:e,dir:Math.random()<.5?1:-1,t:rr(.15,.85)*e.len,lat:rr(-1.2,1.2),state:'walk',hops:(2+Math.random()*6)|0,
+    wait:0,chk:0,quiet:false,inRoad:false,ph:Math.random()*6,jay:null,jayCd:rr(2,9),exitT:-1,col:[rr(.15,.9),rr(.15,.9),rr(.15,.9)]};
+  peds.push(p); pedPose(p); return p;
+}
+function removePed(p){
+  if(!p.alive)return; p.alive=false; pparts.body.hide(p.slot);pparts.head.hide(p.slot);pparts.leg.hide(p.slot*2);pparts.leg.hide(p.slot*2+1);
+  pedFree.push(p.slot); const i=peds.indexOf(p); if(i>=0){peds[i]=peds[peds.length-1];peds.pop();} if(sel===p)select(null);
+}
+function pedPose(p){
+  const e=p.edge; p.x=e.a.x+e.ux*p.t-e.uz*p.lat; p.z=e.a.z+e.uz*p.t+e.ux*p.lat; p.fx=e.ux*p.dir;p.fz=e.uz*p.dir; p.vx=p.fx*p.v;p.vz=p.fz*p.v;
+}
+function roadQuiet(x,z,R){                          // no vehicle bearing down on (x,z)
+  const l=hashNear(x,z,R);
+  for(let i=0;i<l.length;i++){const a=l[i];if(a.kind!=='veh'||a.v<3)continue;const dx=x-a.x,dz=z-a.z,d=hyp(dx,dz);if(d<R&&(a.vx*dx+a.vz*dz)>.6*a.v*d)return false;}
+  return true;
+}
+function updPed(p,dt){
+  const e=p.edge; p.ph+=p.v*dt*4.5;
+  if(p.inRoad){                                      // self-preservation: do not walk into the side of a vehicle
+    const ax=p.x+p.fx*1.3,az=p.z+p.fz*1.3,l=hashNear(p.x,p.z,7);let blk=false;
+    for(let i=0;i<l.length;i++){const a=l[i];if(a.kind!=='veh'||a.parked)continue;const q=obbDist(a,ax,az);if(q<.6&&q<obbDist(a,p.x,p.z)-.3){blk=a;break;}}   // ponytail: parked cars are not obstacles for walkers (slight clipping); snap jaywalk paths to stall gaps if it matters
+    if(blk){
+      p.v=p.vx=p.vz=0;
+      if(blk.v<.3&&p.state!=='wait'){                  // stationary vehicle in the way: walk around its nearer end
+        const sd=((p.x-blk.x)*blk.fx+(p.z-blk.z)*blk.fz>=0?1:-1)*p.sp*dt,sx=blk.fx*sd,sz=blk.fz*sd;
+        if(p.jay){const j=p.jay;j.x0+=sx;j.z0+=sz;j.x1+=sx;j.z1+=sz;j.t=clamp(j.t+sx*j.edge.ux+sz*j.edge.uz,2,j.edge.len-2);p.x+=sx;p.z+=sz;}
+        else{p.lat+=-sx*e.uz+sz*e.ux;pedPose(p);}
+      }
+      return;
+    }
+  }
+  if(p.state==='jay'){                              // diagonal mid-block crossing through live traffic
+    const j=p.jay; j.d+=p.sp*1.3*dt; const f=Math.min(1,j.d/j.len); p.v=p.sp*1.3;
+    p.x=lerp(j.x0,j.x1,f);p.z=lerp(j.z0,j.z1,f);p.fx=(j.x1-j.x0)/j.len;p.fz=(j.z1-j.z0)/j.len;p.vx=p.fx*p.v;p.vz=p.fz*p.v;
+    if(f>=1){p.edge=j.edge;p.t=j.t;p.lat=j.lat;p.state='walk';p.inRoad=false;p.jay=null;}
+  }else if(p.state==='wait'){
+    p.wait+=dt;p.v=0;p.chk-=dt; const n=e.n; let go=false;
+    if(p.chk<=0){p.chk=.5;p.quiet=roadQuiet((e.a.x+e.b.x)/2,(e.a.z+e.b.z)/2,n.type==='sig'?28:17);}
+    if(n.type==='sig'){const s=n.ped[e.leg];
+      go=s==='W'||(s==='F'&&p.imp>.6&&(n.G-n.t)*p.sp>e.len*.8)||(s==='D'&&p.imp>.8&&P.jaywalk>.2&&p.wait>4&&p.quiet);}
+    else go=p.wait>.6&&(p.quiet||p.wait>7+10*(1-p.imp));
+    if(go)p.state='cross';
+    pedPose(p);
+  }else{
+    p.v=p.sp*(p.state==='cross'?1.12:1); p.t+=p.dir*p.v*dt; if(Math.abs(p.lat)>1.3)p.lat-=Math.sign(p.lat)*dt*.8;
+    if(p.state==='cross')p.inRoad=p.t>1.4&&p.t<e.len-1.4;
+    else{
+      if(p.hops<=0&&p.exitT<0)p.exitT=rr(.2,.8)*e.len;
+      if(p.exitT>=0&&(p.dir>0?p.t>=p.exitT:p.t<=p.exitT)){removePed(p);return;}        // walks into a building
+      p.jayCd-=dt;
+      if(p.jayCd<=0){p.jayCd=rr(3,8);const f=p.t/e.len;
+        if(e.opp&&p.imp>.55&&f>.22&&f<.78&&Math.random()<P.jaywalk*p.imp*.3){               // impatient: spawn a diagonal jaywalk path
+          const o=e.opp,t2=clamp(p.t+p.dir*rr(6,14),6,e.len-6),lat=rr(-1,1); pedPose(p);
+          const x1=o.a.x+o.ux*t2-o.uz*lat,z1=o.a.z+o.uz*t2+o.ux*lat;
+          p.jay={x0:p.x,z0:p.z,x1,z1,d:0,len:hyp(x1-p.x,z1-p.z),edge:o,t:t2,lat};p.state='jay';p.inRoad=true;return;}
+      }
+    }
+    if(p.dir>0?p.t>=e.len:p.t<=0){                    // reached a corner: pick the next edge
+      const c=p.dir>0?e.b:e.a,opts=c.e.filter(x=>x!==e),ne=opts[(Math.random()*opts.length)|0]||e;
+      p.inRoad=false;p.edge=ne;p.dir=ne.a===c?1:-1;p.hops--;p.exitT=-1;
+      p.t=(p.x-ne.a.x)*ne.ux+(p.z-ne.a.z)*ne.uz;p.lat=-(p.x-ne.a.x)*ne.uz+(p.z-ne.a.z)*ne.ux;     // keep the world position continuous across the corner
+      if(ne.type==='x'){p.state='wait';p.wait=0;p.chk=0;}else p.state='walk';
+    }
+    pedPose(p);
+  }
+  if(p.inRoad){                                     // struck by a vehicle?
+    const l=hashNear(p.x,p.z,6);
+    for(let i=0;i<l.length;i++){const a=l[i];if(a.kind!=='veh'||a.isPlayer||a.v<1.5||obbDist(a,p.x,p.z)>.2||(p.x-a.x)*a.fx+(p.z-a.z)*a.fz<a.len/2-.4)continue;
+      logEv('pedHit',{ped:p.state,veh:a.state+'|'+a.mode+'|'+a.turn+'|v'+a.v.toFixed(1),lapse:a.lapseT>0,obs:a.obs?a.obs.kind:'none',node:a.boxNode?a.boxNode.type:'-'});
+      stats.pedHits++;a.crashT=rr(4,6);a.resume=true;reward(a,-RW.ped);removePed(p);return;}
+  }
+}
+function drawPed(p){
+  const i=p.slot,sw=Math.sin(p.ph)*.2*Math.min(1,p.v),rx=-p.fz,rz=p.fx;
+  pparts.body.put(i,p.x,1.07,p.z,p.fx,p.fz,.26,.66,.48);pparts.body.col(i,p.col[0],p.col[1],p.col[2]);
+  pparts.head.put(i,p.x,1.56,p.z,p.fx,p.fz,.27,.27,.27);
+  pparts.leg.put(i*2,p.x+p.fx*sw+rx*.11,.37,p.z+p.fz*sw+rz*.11,p.fx,p.fz,.15,.74,.15);
+  pparts.leg.put(i*2+1,p.x-p.fx*sw-rx*.11,.37,p.z-p.fz*sw-rz*.11,p.fx,p.fz,.15,.74,.15);
+}
+let pedAcc=0;
+function spawnPeds(dt){pedAcc+=P.pedRate/60*dt;while(pedAcc>=1){pedAcc--;if(peds.length<Math.min(P.maxPeds,MAXP-2))spawnPed();}}
+
+/* ============================== HORN ============================== */
+let actx=null;
+function honk(v){
+  if(!P.audio)return; const d=hyp(v.x-camera.position.x,v.z-camera.position.z); if(d>150)return;
+  try{actx=actx||new AudioContext();const o=actx.createOscillator(),g=actx.createGain();o.type='square';o.frequency.value=370+(v.id*37%90);
+    g.gain.value=.05*(1-d/150);o.connect(g).connect(actx.destination);o.start();o.stop(actx.currentTime+.28);}catch(e){}
+}
+const honkRing=new Inst(GEO.disc,new THREE.MeshBasicMaterial({color:0xffe14a,transparent:true,opacity:.55,depthWrite:false}),64,false);
+
+/* ============================== PLAYER (driver / pedestrian) ============================== */
+const keys={};
+const player={fp:false,wrongT:0,box:null,
+  car:{kind:'veh',isPlayer:true,active:false,alive:true,id:1e9,slot:MAXV-1,type:VT[0],len:VT[0].len,wid:VT[0].wid,col:[1,.82,.08],x:0,z:0,fx:0,fz:-1,yaw:0,v:0,vx:0,vz:0,acc:0,steer:0,ind:0,brake:false,shake:0,mode:'free',crashT:0,dp:0,skid:false,honkT:0},
+  ped:{kind:'ped',isPlayer:true,active:false,alive:true,id:1e9+1,slot:MAXP-1,len:.5,wid:.5,x:0,z:0,fx:0,fz:-1,yaw:0,v:0,vx:0,vz:0,inRoad:false,ph:0,col:[1,.82,.08],state:'player'}};
+let msgT=0;
+function msg(t,d=2.2){const m=document.getElementById('msg');m.textContent=t;m.style.display='block';msgT=d;}
+function updPlayerCar(dt){
+  const c=player.car,k=keys,mu=W.mu,w=world;
+  const thr=k.KeyW||k.ArrowUp,brk=k.KeyS||k.ArrowDown,st=((k.KeyD||k.ArrowRight)?1:0)-((k.KeyA||k.ArrowLeft)?1:0);
+  let a=0;
+  if(thr)a+=c.v>=-.1?Math.min(4.4*(1-c.v/45),mu*GRAV*.75):Math.min(8,mu*GRAV);
+  if(brk)a-=c.v>.3?Math.min(9.5,mu*GRAV):(c.v>-7?2.4:0);
+  a-=.01*c.v*Math.abs(c.v)+((thr||brk)?0:.4*Math.sign(c.v));
+  if(k.Space)a-=Math.sign(c.v)*Math.min(7,mu*GRAV);
+  const pv=c.v; c.v+=a*dt; if(pv*c.v<0&&(k.Space||!(thr||brk)))c.v=0;
+  c.acc=a; c.brake=!!(brk&&pv>.3)||!!k.Space;
+  const maxSt=lerp(.6,.07,clamp(Math.abs(c.v)/35,0,1)); c.steer=lerp(c.steer,st*maxSt,Math.min(1,dt*6));
+  let yr=c.v*Math.tan(c.steer)/2.7; const latA=Math.abs(c.v*yr),lim=mu*GRAV*.95;
+  c.skid=latA>lim||(brk&&pv>4&&mu<.5); if(latA>lim)yr*=lim/latA;                      // grip limit: understeer on low-mu surfaces
+  c.shake=c.skid?Math.sin(simT*70)*.03:0;
+  c.yaw+=yr*dt; c.fx=Math.sin(c.yaw); c.fz=-Math.cos(c.yaw);
+  const ox=c.x,oz=c.z; c.x=clamp(c.x+c.fx*c.v*dt,w.bounds.X0,w.bounds.X1); c.z=clamp(c.z+c.fz*c.v*dt,w.bounds.Z0,w.bounds.Z1); c.vx=c.fx*c.v;c.vz=c.fz*c.v;
+  for(const b of w.blocks)if(c.x>b.x0&&c.x<b.x1&&c.z>b.z0&&c.z<b.z1){c.x=ox;c.z=oz;if(Math.abs(c.v)>2)msg('You hit a building');c.v*=-.25;break;}
+  const l=hashNear(c.x,c.z,9);
+  for(let i=0;i<l.length;i++){const o=l[i]; if(o===c)continue;
+    if(o.kind==='veh'){ if(hyp(o.x-c.x,o.z-c.z)<(o.len+c.len)/2+.5&&obbHit(c,o,.97)){
+        c.x=ox;c.z=oz; if(Math.abs(c.v)>1.5){stats.crashes++;msg('COLLISION');if(!o.parked&&!(o.crashT>0)){o.crashT=rr(4,7);o.resume=true;}}
+        c.v*=-.3;break;}}
+    else if(!o.isPlayer&&Math.abs(c.v)>1.5&&obbDist(c,o.x,o.z)<.25){stats.pedHits++;removePed(o);msg('You hit a pedestrian!');break;}
+  }
+  // traffic violations: red light and wrong-way driving -> surrounding drivers honk
+  const ix=Math.round(c.x/SP+w.N/2),iz=Math.round(c.z/SP+w.M/2),n=w.nodes.get(ix+','+iz);
+  const inBox=n&&n.real&&Math.abs(c.x-n.x)<w.HWv+CWS&&Math.abs(c.z-n.z)<w.HWh+CWS?n:null;
+  if(inBox&&player.box!==inBox&&inBox.type==='sig'&&c.v>2){
+    let k0=0,bd=-2;for(let q=0;q<4;q++){const d=c.fx*DIRS[q][0]+c.fz*DIRS[q][1];if(d>bd){bd=d;k0=q;}}
+    if(inBox.st[k0]==='R'){stats.redRuns++;msg('RED LIGHT VIOLATION');honkNear(c,45);}
+  }
+  player.box=inBox;
+  let wrong=false;
+  if(!inBox&&c.v>3){
+    const ox2=c.x-w.nx(ix),oz2=c.z-w.nz(iz);
+    if(ix>=0&&ix<=w.N&&Math.abs(ox2)<w.HWv&&Math.abs(ox2)>MED)wrong=c.fz*(ox2>0?-1:1)<-.5;
+    else if(iz>=0&&iz<=w.M&&Math.abs(oz2)<w.HWh&&Math.abs(oz2)>MED)wrong=c.fx*(oz2>0?1:-1)<-.5;
+  }
+  player.wrongT=wrong?player.wrongT+dt:0; if(player.wrongT>1.2){player.wrongT=-2;msg('WRONG WAY');honkNear(c,40);}
+}
+function honkNear(c,R){let n=0;for(const v of vehs){if(n>=4)break;if(v.honkT<=0&&hyp(v.x-c.x,v.z-c.z)<R){v.honkT=.9;stats.honks++;honk(v);n++;}}}
+function updPlayerPed(dt){
+  const p=player.ped,k=keys,w=world;
+  const fw=((k.KeyW||k.ArrowUp)?1:0)-((k.KeyS||k.ArrowDown)?1:0),tr=((k.KeyD||k.ArrowRight)?1:0)-((k.KeyA||k.ArrowLeft)?1:0),sf=(k.KeyE?1:0)-(k.KeyQ?1:0);
+  p.yaw+=tr*2.3*dt; p.fx=Math.sin(p.yaw);p.fz=-Math.cos(p.yaw);
+  const sp=k.ShiftLeft||k.ShiftRight?3.6:1.7,mx=(p.fx*fw-p.fz*sf)*sp,mz=(p.fz*fw+p.fx*sf)*sp,ox=p.x,oz=p.z;
+  p.x=clamp(p.x+mx*dt,w.bounds.X0,w.bounds.X1);p.z=clamp(p.z+mz*dt,w.bounds.Z0,w.bounds.Z1);p.vx=mx;p.vz=mz;p.v=hyp(mx,mz);p.ph+=p.v*dt*4.5;
+  for(const b of w.blocks)if(p.x>b.x0+1&&p.x<b.x1-1&&p.z>b.z0+1&&p.z<b.z1-1){p.x=ox;p.z=oz;break;}
+  const ix=Math.round(p.x/SP+w.N/2),iz=Math.round(p.z/SP+w.M/2);
+  p.inRoad=(ix>=0&&ix<=w.N&&Math.abs(p.x-w.nx(ix))<w.HWv)||(iz>=0&&iz<=w.M&&Math.abs(p.z-w.nz(iz))<w.HWh);
+  if(p.inRoad){const l=hashNear(p.x,p.z,6);
+    for(let i=0;i<l.length;i++){const a=l[i];if(a.kind!=='veh'||a.v<1.5||obbDist(a,p.x,p.z)>.2)continue;
+      stats.pedHits++;a.crashT=rr(4,6);a.resume=true;reward(a,-RW.ped);msg('You were hit by a car!',3);
+      const n=w.real.reduce((b,q)=>hyp(q.x-p.x,q.z-p.z)<hyp(b.x-p.x,b.z-p.z)?q:b),c=n.corner[0];p.x=c.x;p.z=c.z;break;}
+  }
+}
+/* ============================== CAMERA RIGS & INPUT ============================== */
+let sel=null,camMode='god',camDist=15;
+function select(a){sel=a;document.getElementById('insp').style.display=a?'block':'none';if(!a&&camMode==='track')setMode('god');}
+function setMode(m){
+  const w=world,t=orbit.target;
+  player.car.active=player.ped.active=false; hideVeh(vparts,MAXV-1); pparts.body.hide(MAXP-1);pparts.head.hide(MAXP-1);pparts.leg.hide(MAXP*2-2);pparts.leg.hide(MAXP*2-1);
+  if(m==='track'&&!sel)m='god';
+  if(m==='drive'){                                  // drop the player car on the lane nearest to the current view centre
+    let best=null,bd=1e9;for(const s of w.segs){if(!s.from.real||!s.to.real)continue;const d=hyp(s.ox+s.dx*s.len/2-t.x,s.oz+s.dz*s.len/2-t.z);if(d<bd){bd=d;best=s;}}
+    const c=player.car,o=laneOff(best.L,best.L-1);let s=best.len*.4;
+    while(s>12&&best.vehs.some(v=>Math.abs(v.s-s)<12))s-=6;
+    c.x=best.ox+best.dx*s+best.rx*o;c.z=best.oz+best.dz*s+best.rz*o;c.yaw=Math.atan2(best.dx,-best.dz);c.fx=best.dx;c.fz=best.dz;c.v=0;c.steer=0;c.active=true;player.box=null;
+    sel=c;document.getElementById('insp').style.display='block';
+  }else if(m==='walk'){
+    const n=w.real.reduce((b,q)=>hyp(q.x-t.x,q.z-t.z)<hyp(b.x-t.x,b.z-t.z)?q:b),c=n.corner[1],p=player.ped;
+    p.x=c.x;p.z=c.z;p.yaw=Math.PI/2;p.fx=1;p.fz=0;p.active=true;sel=p;document.getElementById('insp').style.display='block';
+  }else if(m==='god'){
+    if(camMode!=='god'){const a=sel&&sel.alive?sel:null;if(a){orbit.target.set(a.x,0,a.z);camera.position.set(a.x+40,60,a.z+55);}}
+    if(sel&&sel.isPlayer)select(null);
+  }
+  camMode=m; orbit.enabled=m==='god'; updHelp();
+}
+const _cv=new THREE.Vector3();
+function updCamera(dt){
+  if(camMode==='god'){                              // WASD / arrows pan the view along the ground
+    const k=keys,fw=((k.KeyW||k.ArrowUp)?1:0)-((k.KeyS||k.ArrowDown)?1:0),rt=((k.KeyD||k.ArrowRight)?1:0)-((k.KeyA||k.ArrowLeft)?1:0);
+    if(fw||rt){
+      let fx=orbit.target.x-camera.position.x,fz=orbit.target.z-camera.position.z;const n=hyp(fx,fz)||1;fx/=n;fz/=n;
+      const sp=camera.position.distanceTo(orbit.target)*(k.ShiftLeft||k.ShiftRight?2.4:1)*dt,mx=(fx*fw-fz*rt)*sp,mz=(fz*fw+fx*rt)*sp;
+      orbit.target.x+=mx;orbit.target.z+=mz;camera.position.x+=mx;camera.position.z+=mz;
+    }
+    orbit.update();return;}
+  const a=camMode==='track'?sel:camMode==='drive'?player.car:player.ped; if(!a||!a.alive){setMode('god');return;}
+  const isPed=a.kind==='ped';
+  if(player.fp&&camMode!=='track'){
+    const h=isPed?1.62:1.38,fwd=isPed?.15:.6; camera.position.set(a.x+a.fx*fwd,h,a.z+a.fz*fwd); camera.lookAt(a.x+a.fx*30,h-(isPed?1.5:1),a.z+a.fz*30);
+  }else{
+    const d=camDist*(isPed?.42:1); _cv.set(a.x-a.fx*d,d*(.42+clamp((d-30)/200,0,.6))+(isPed?1.3:1.6),a.z-a.fz*d);   // far chase distances tilt into an overview
+    camera.position.lerp(_cv,1-Math.exp(-dt*4.5)); camera.lookAt(a.x+a.fx*5,1.2,a.z+a.fz*5);
+  }
+}
+addEventListener('keydown',e=>{
+  if(e.target.tagName==='INPUT')return; keys[e.code]=true;
+  if(e.code==='KeyV')player.fp=!player.fp;
+  if(e.code==='Escape'||e.code==='KeyG')setMode('god');
+  if(e.code==='KeyH'&&camMode==='drive'){const o=P.audio;P.audio=true;honk(player.car);P.audio=o;}
+  if(e.code==='KeyP')P.pause=!P.pause;
+  if(e.code==='KeyX'&&sel&&sel.dest){sel.dest=null;sel.route=null;msg('Destination cleared',1.2);}
+  if(['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code)&&camMode!=='god')e.preventDefault();
+});
+addEventListener('keyup',e=>{keys[e.code]=false;});
+addEventListener('blur',()=>{for(const k in keys)keys[k]=false;});
+renderer.domElement.addEventListener('wheel',e=>{if(camMode!=='god')camDist=clamp(camDist*(e.deltaY>0?1.12:.89),5,240);},{passive:true});
+// click-to-inspect: project the click on the ground and take the nearest agent
+const ray=new THREE.Raycaster(),gp=new THREE.Plane(new THREE.Vector3(0,1,0),-.8),_hp=new THREE.Vector3();let pdx=0,pdy=0;
+renderer.domElement.addEventListener('pointerdown',e=>{pdx=e.clientX;pdy=e.clientY;});
+renderer.domElement.addEventListener('pointerup',e=>{
+  if(hyp(e.clientX-pdx,e.clientY-pdy)>5||camMode==='drive'||camMode==='walk')return;
+  ray.setFromCamera({x:e.clientX/innerWidth*2-1,y:-(e.clientY/innerHeight)*2+1},camera);
+  if(!ray.ray.intersectPlane(gp,_hp))return;
+  const sv=sel&&sel.kind==='veh'&&!sel.isPlayer?sel:null;
+  if(sv&&e.shiftKey){setDest(sv,_hp.x,_hp.z);return;}          // Shift+click: send the selected car there
+  let best=null,bd=6; for(const a of hashNear(_hp.x,_hp.z,8)){if(a.parked)continue;const d=hyp(a.x-_hp.x,a.z-_hp.z)-(a.kind==='veh'?a.len/2:0);if(d<bd){bd=d;best=a;}}
+  if(best){select(best);setMode('track');}
+  else if(sv&&camMode==='track')setDest(sv,_hp.x,_hp.z);       // tracking: click a road to set this car's destination
+});
+function cycleSel(kind){const arr=kind==='veh'?vehs:peds;if(!arr.length)return;const i=arr.indexOf(sel);select(arr[(i+1)%arr.length]);setMode('track');}
+
+/* ============================== ENVIRONMENT: WEATHER & DAY/NIGHT ============================== */
+const NPART=7000,pOff=new Float32Array(NPART*3);
+for(let i=0;i<NPART;i++){pOff[i*3]=rr(-90,90);pOff[i*3+1]=rr(0,55);pOff[i*3+2]=rr(-90,90);}
+const rainGeo=new THREE.BufferGeometry(),snowGeo=new THREE.BufferGeometry();
+rainGeo.setAttribute('position',new THREE.BufferAttribute(new Float32Array(NPART*6),3).setUsage(THREE.DynamicDrawUsage));
+snowGeo.setAttribute('position',new THREE.BufferAttribute(new Float32Array(NPART*3),3).setUsage(THREE.DynamicDrawUsage));
+const rain=new THREE.LineSegments(rainGeo,new THREE.LineBasicMaterial({color:0xa9bfd8,transparent:true,opacity:.5}));
+const snow=new THREE.Points(snowGeo,new THREE.PointsMaterial({color:0xffffff,size:.24,transparent:true,opacity:.9}));
+rain.frustumCulled=snow.frustumCulled=false; rain.visible=snow.visible=false; scene.add(rain,snow);
+function focusPt(){const a=camMode==='god'?null:camMode==='track'?sel:camMode==='drive'?player.car:player.ped;return a?a:orbit.target;}
+function updParticles(dt){
+  const wx=P.weather; rain.visible=wx==='Rain'; snow.visible=wx==='Snow'; if(wx==='Clear')return;
+  const f=focusPt(),isR=wx==='Rain',vy=isR?42:5,a=(isR?rainGeo:snowGeo).attributes.position.array;
+  const k=camMode==='god'?Math.max(1,camera.position.distanceTo(orbit.target)/130):1;      // the precipitation volume grows with the overview distance
+  snow.material.size=.24*k;
+  for(let i=0;i<NPART;i++){
+    const o=i*3; pOff[o+1]-=vy*dt*(.8+(i%5)*.1); if(pOff[o+1]<0)pOff[o+1]+=55;
+    let x=f.x+pOff[o]*k,y=pOff[o+1]*k,z=f.z+pOff[o+2]*k;
+    if(isR){const q=i*6;a[q]=x;a[q+1]=y;a[q+2]=z;a[q+3]=x+.25*k;a[q+4]=y+1.5*k;a[q+5]=z;}
+    else{x+=Math.sin(simT*.8+i)*1.2;a[o]=x;a[o+1]=y;a[o+2]=z;}
+  }
+  (isR?rainGeo:snowGeo).attributes.position.needsUpdate=true;
+}
+const SKY_D=new THREE.Color(.5,.74,1),SKY_O=new THREE.Color(.5,.55,.6),SKY_N=new THREE.Color(.015,.025,.06),SKY_E=new THREE.Color(.95,.5,.25),_c=new THREE.Color();
+scene.background=new THREE.Color();
+let lastBulb=-1;
+function updEnv(dt){
+  if(P.cycleDay&&!P.pause)P.tod=(P.tod+24*dt*P.timeScale/P.dayLen)%24;
+  W=WX[P.weather];
+  const ang=(P.tod-6)/12*Math.PI,el=Math.sin(ang),day=clamp((el+.12)/.35,0,1),ov=P.weather==='Clear'?0:P.weather==='Rain'?.65:.5;
+  nightF=1-day; blinkOn=(simT*2.6%1)<.5;
+  sun.position.set(Math.cos(ang)*300,Math.max(el,.06)*300,110); sun.intensity=1.7*day*(1-ov*.75); sun.color.setRGB(1,lerp(.6,.95,clamp(el*2.5,0,1)),lerp(.35,.86,clamp(el*2.5,0,1)));
+  hemi.intensity=lerp(.16,.95,day)*(1-ov*.2);
+  _c.copy(SKY_D).lerp(SKY_O,ov); const dusk=clamp(1-Math.abs(el)*5,0,1)*(1-ov)*.55; _c.lerp(SKY_E,dusk*day); scene.background.copy(SKY_N).lerp(_c,day);
+  const cd=camMode==='god'?camera.position.distanceTo(orbit.target):0;      // keep the overview readable: fog is measured from the area being looked at
+  scene.fog.color.copy(scene.background); scene.fog.near=(P.weather==='Clear'?300:P.weather==='Rain'?50:30)+cd*.7; scene.fog.far=(P.weather==='Clear'?2600:P.weather==='Rain'?620:400)+cd*1.6;
+  MAT.bld.emissiveIntensity=nightF*.9; MAT.glow.opacity=nightF*.45;
+  MAT.ground.roughness=P.weather==='Rain'?.32:.95; const sn=P.weather==='Snow'?.16+.3*day:0; MAT.ground.emissive.setRGB(sn,sn*1.03,sn*1.08); MAT.marks.emissive.setRGB(sn*.8,sn*.8,sn*.85);
+  MAT.ground.color.setScalar(P.weather==='Rain'?.72:1);
+  const b=Math.round(nightF*20);
+  if(b!==lastBulb&&world){lastBulb=b;const L=world.lampBulb,q=lerp(.3,1,nightF);for(let i=0;i<L.n;i++)L.col(i,q,q*.92,q*.65);L.done();}
+}
+/* ============================== DRAW: AGENTS & DEBUG OVERLAYS ============================== */
+function drawAgents(){
+  let h=0;
+  for(const v of vehs){placeVeh(vparts,v.slot,v);if(v.honkT>0&&h<64){const s=1.4+(1-v.honkT)*3;honkRing.put(h++,v.x,v.type.bh+v.type.ch+1.3,v.z,1,0,s,1,s);}}
+  for(;h<64;h++)honkRing.hide(h); honkRing.done();
+  if(player.car.active)placeVeh(vparts,MAXV-1,player.car); doneVeh(vparts);
+  for(const p of peds)drawPed(p); if(player.ped.active)drawPed(player.ped);
+  pparts.body.done();pparts.head.done();pparts.leg.done();
+}
+const DEG=Math.PI/180;
+const fovGeo=(()=>{const pos=[],col=[];
+  const sec=(a0,a1,r,c)=>{const n=Math.max(2,Math.ceil((a1-a0)/8));for(let i=0;i<n;i++){const b0=(a0+(a1-a0)*i/n)*DEG,b1=(a0+(a1-a0)*(i+1)/n)*DEG;
+    pos.push(0,0,0,r*Math.cos(b0),0,r*Math.sin(b0),r*Math.cos(b1),0,r*Math.sin(b1));for(let q=0;q<3;q++)col.push(c[0],c[1],c[2]);}};
+  sec(-55,55,1,[.2,1,.3]);
+  for(const s of[-1,1]){const A=(a,b)=>s>0?[a,b]:[-b,-a];sec(...A(55,100),.4,[1,.9,.2]);sec(...A(100,135),.3,[1,.12,.08]);sec(...A(135,160),.5,[.25,.55,1]);}
+  sec(160,200,.55,[.2,1,1]);
+  const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));g.setAttribute('color',new THREE.Float32BufferAttribute(col,3));return g;})();
+const NFOV=80,NHIT=600;
+const fovInst=new Inst(fovGeo,new THREE.MeshBasicMaterial({vertexColors:true,transparent:true,opacity:.22,depthWrite:false,side:THREE.DoubleSide}),NFOV,false);
+const hitInst=new Inst(GEO.box,MAT.wire,NHIT,false);
+const RC=[[1,.9,.2],[1,.15,.1],[.2,.9,1],[.3,1,.4],[.3,1,.4]];
+const destMark=new THREE.Mesh(new THREE.CylinderGeometry(.9,.9,40,10),new THREE.MeshBasicMaterial({color:0xff3df2,transparent:true,opacity:.55,depthWrite:false}));
+destMark.visible=false; scene.add(destMark);
+function drawDebug(){
+  dbgN=0; const f=focusPt(),R=PR*W.pr,kz=Math.tan(55*W.ff*DEG)/Math.tan(55*DEG);let nf=0,nh=0;
+  const isVeh=sel&&sel.kind==='veh'&&!sel.isPlayer;
+  roofSpr.visible=!!(isVeh&&brain.sel&&sel.probs&&simT-sel.aiT<1.5); if(roofSpr.visible)roofSpr.position.set(sel.x,sel.type.bh+sel.type.ch+(v2on()?4.9:3.6),sel.z);
+  if(isVeh)fovInst.put(nf++,sel.x,.32,sel.z,sel.fx,sel.fz,R,1,R*kz);
+  const nav=isVeh&&sel.dest?sel:null; destMark.visible=!!nav;
+  if(nav){                                          // destination beacon + planned route of the tracked car
+    const d=nav.dest,ln=(sg,a,b)=>{const o=MED+sg.L*LW/2;dline(sg.ox+sg.dx*a+sg.rx*o,sg.oz+sg.dz*a+sg.rz*o,sg.ox+sg.dx*b+sg.rx*o,sg.oz+sg.dz*b+sg.rz*o,1,.25,.95,.5);};
+    destMark.position.set(d.x,20,d.z);
+    if(nav.mode==='seg'&&nav.seg===d.seg&&nav.s<d.s)ln(d.seg,nav.s,d.s);
+    else{if(nav.mode==='seg')ln(nav.seg,nav.s,nav.seg.len);if(nav.route)nav.route.forEach((sg,i)=>ln(sg,0,i===nav.route.length-1?d.s:sg.len));}
+  }
+  for(const v of vehs){
+    const near=Math.abs(v.x-f.x)<170&&Math.abs(v.z-f.z)<170;
+    if(P.fov&&near&&v!==sel&&nf<NFOV)fovInst.put(nf++,v.x,.3,v.z,v.fx,v.fz,R,1,R*kz);
+    if(P.hitboxes&&near&&nh<NHIT)hitInst.put(nh++,v.x,.9,v.z,v.fx,v.fz,v.len,1.6,v.wid);
+    if((near&&(P.rays||P.paths))||v===sel){const r=v.rays;
+      for(let i=0;i<r.length;i+=5){const t=r[i+4];if(t===4?(P.paths||v===sel):(P.rays||v===sel)){const c=RC[t];dline(r[i],r[i+1],r[i+2],r[i+3],c[0],c[1],c[2],t===4?.25:1.1);}}}
+  }
+  if(P.paths||P.hitboxes||(sel&&sel.kind==='ped'))for(const p of peds){
+    if(Math.abs(p.x-f.x)>170||Math.abs(p.z-f.z)>170)continue;
+    if(P.hitboxes&&nh<NHIT)hitInst.put(nh++,p.x,.9,p.z,p.fx,p.fz,.5,1.8,.5);
+    if(P.paths||p===sel){
+      if(p.jay){const j=p.jay;dline(j.x0,j.z0,j.x1,j.z1,1,.2,1,.3);dline(j.x1-1,j.z1,j.x1+1,j.z1,1,.2,1,.3);dline(j.x1,j.z1-1,j.x1,j.z1+1,1,.2,1,.3);dline(j.x0-1,j.z0,j.x0+1,j.z0,1,.2,1,.3);}
+      else{const e=p.edge,c=p.dir>0?e.b:e.a,cr=e.type==='x';dline(p.x,p.z,c.x,c.z,cr?1:.3,cr?.6:.7,cr?.1:1,.3);}
+    }
+  }
+  if(P.hitboxes){for(const o of world.parked){if(nh>=NHIT)break;if(Math.abs(o.x-f.x)<120&&Math.abs(o.z-f.z)<120)hitInst.put(nh++,o.x,.9,o.z,o.fx,o.fz,o.len,1.6,o.wid);}
+    const c=player.car;if(c.active&&nh<NHIT)hitInst.put(nh++,c.x,.9,c.z,c.fx,c.fz,c.len,1.6,c.wid);}
+  fovInst.m.material.opacity=P.fov?.07:.22;
+  for(let i=nf;i<fovInst.shown;i++)fovInst.hide(i); fovInst.shown=nf; fovInst.done();
+  for(let i=nh;i<hitInst.shown;i++)hitInst.hide(i); hitInst.shown=nh; hitInst.done();
+  dbgGeo.setDrawRange(0,dbgN*2); dbgGeo.attributes.position.needsUpdate=true; dbgGeo.attributes.color.needsUpdate=true;
+}
+fovInst.shown=NFOV; hitInst.shown=NHIT;
+/* ============================== HUD ============================== */
+const $=id=>document.getElementById(id);
+function updHelp(){
+  $('help').innerHTML={
+    god:'<b>God view</b> - WASD / arrows: move (Shift: faster) | drag: orbit | right-drag: pan | wheel: zoom | <b>click an agent</b> to inspect &amp; track | P: pause',
+    track:'<b>Agent tracker</b> - <b>click a road: set this car\'s destination</b> (Shift+click works anywhere, also in God view) | X: clear it | wheel: chase distance / overview | click another agent to switch | <b>G / Esc</b>: God view',
+    drive:'<b>Driver mode</b> - W/S or Up/Down: throttle / brake-reverse | A/D or Left/Right: steer | Space: handbrake | H: horn | V: 1st / 3rd person | G / Esc: exit',
+    walk:'<b>Pedestrian mode</b> - W/S: walk | A/D: turn | Q/E: strafe | Shift: run | V: 1st / 3rd person | G / Esc: exit'}[camMode];
+}
+function updHud(fps){
+  let sp=0,st=0;for(const v of vehs){sp+=v.v;if(v.v<.5)st++;}
+  const n=Math.max(1,vehs.length),hh=Math.floor(P.tod),mm=Math.floor((P.tod-hh)*60);
+  $('stats').innerHTML=`<b>URBAN TRAFFIC MICRO-SIM</b><br><span class="k">fps</span> ${fps} &nbsp;<span class="k">sim</span> ${simT.toFixed(0)}s &nbsp;<span class="k">clock</span> ${String(hh).padStart(2,'0')}:${String(mm).padStart(2,'0')}<br>`+
+    `<span class="k">vehicles</span> ${vehs.length} &nbsp;<span class="k">pedestrians</span> ${peds.length}<br><span class="k">mean speed</span> ${(sp/n*3.6).toFixed(0)} km/h &nbsp;<span class="k">stopped</span> ${(st/n*100).toFixed(0)}%<br>`+
+    `<span class="k">weather</span> ${P.weather} &nbsp;<span class="k">&mu;</span> ${W.mu} &nbsp;<span class="k">sight</span> ${(PR*W.pr).toFixed(0)} m<br>`+
+    `<span class="k">crashes</span> <span class="${stats.crashes?'warn':'ok'}">${stats.crashes}</span> &nbsp;<span class="k">ped hits</span> <span class="${stats.pedHits?'warn':'ok'}">${stats.pedHits}</span> &nbsp;<span class="k">red runs</span> ${stats.redRuns}<br>`+
+    `<span class="k">cut-offs</span> ${stats.cutoffs} &nbsp;<span class="k">bypasses</span> ${stats.bypasses} &nbsp;<span class="k">honks</span> ${stats.honks}<br>`+
+    `<span class="k">swerves</span> ${stats.swerves} &nbsp;<span class="k">dodges</span> ${stats.dodges} &nbsp;<span class="k">reroutes</span> ${stats.reroutes} &nbsp;<span class="k">right-on-red</span> ${stats.rtor} &nbsp;<span class="k">reverses</span> ${stats.reverses}`;
+  const b=brain,t=b.model&&b.model.trained,t2=b.model2&&b.model2.trained,u2=b.rl2Hist[b.rl2Hist.length-1],e=b.hist[b.hist.length-1];
+  $('nnTxt').innerHTML=`<b>NEURAL BRAIN</b> ${b.ready?'':'<span class="warn">'+(b.err||'starting worker...')+'</span>'}<br>`+
+    `<span class="k">mode</span> ${P.aiMode}${P.headless?' <span class="warn">HEADLESS '+b.tps+' ticks/s</span>':''}<br>`+
+    `<span class="k">v1 gate 12-32-16-4</span> ${t?(t.valAcc!=null?'cloned, '+(t.valAcc*100).toFixed(1)+'% val accuracy':'imported')+(t.rlUpdates?', '+t.rlUpdates+' RL updates':''):'<span class="warn">untrained (random)</span>'}<br>`+
+    `<span class="k">v2 strategic 20-64-32-14</span> ${t2?(t2.ppoUpdates!=null?'PPO from scratch, '+t2.ppoUpdates+' updates':'imported'):'<span class="k">none yet (PURE RL button)</span>'}${b.train2&&u2?' <span class="warn">training: return '+u2.ret.toFixed(2)+', entropy '+u2.entropy.toFixed(2)+'</span>':''}<br>`+
+    `<span class="k">inference</span> ${b.inferN} cars/tick &nbsp;<span class="k">worker</span> ${b.ms.toFixed(1)} ms<br>`+
+    `<span class="k">samples</span> ${b.memN} <span class="k">[cruise ${b.counts[0]} yield ${b.counts[1]} nudge ${b.counts[2]} overtake ${b.counts[3]}]</span>`+
+    (b.pipe?`<br><span class="warn">AUTO-TRAIN</span> ${b.pipe}`:'')+
+    (b.training&&e?`<br><span class="warn">training</span> epoch ${e.epoch}/${e.epochs} loss ${e.loss.toFixed(3)}`:'')+
+    (P.aiMode===MODES[3]?`<br><span class="warn">RL</span> ${b.rlHist.length?'update '+b.rlHist[b.rlHist.length-1].upd+', mean return '+b.rlHist[b.rlHist.length-1].ret.toFixed(2):'collecting decisions...'}`:'');
+  const a=sel; if(!a)return; let h;
+  if(a.isPlayer&&a.kind==='veh')h=`<b>PLAYER CAR</b><br><span class="k">speed</span> <span class="${a.v*3.6>P.speedLimit*1.15?'warn':''}">${(a.v*3.6).toFixed(0)}</span> km/h (limit ${P.speedLimit})<br><span class="k">accel</span> ${a.acc.toFixed(1)} m/s&sup2;<br><span class="k">steer</span> ${(a.steer/DEG).toFixed(0)}&deg; ${a.skid?'<span class="warn">SKID / ABS</span>':''}<br><span class="k">grip &mu;</span> ${W.mu}`;
+  else if(a.isPlayer)h=`<b>PLAYER PEDESTRIAN</b><br><span class="k">speed</span> ${a.v.toFixed(1)} m/s<br>${a.inRoad?'<span class="warn">IN ROADWAY</span>':'<span class="ok">on sidewalk</span>'}`;
+  else if(a.kind==='veh')h=`<b>VEHICLE #${a.id}</b> (${a.type.n})<br><span class="k">speed</span> ${(a.v*3.6).toFixed(0)} km/h &nbsp;<span class="k">target</span> ${(a.v0c*3.6).toFixed(0)}<br><span class="k">accel</span> ${a.acc.toFixed(2)} m/s&sup2;<br>`+
+    `<span class="k">state</span> <span class="${a.aeb||a.crashT>0?'warn':'ok'}">${a.state}</span><br><span class="k">route</span> next turn ${a.turn} &nbsp;<span class="k">lane</span> ${a.lane<0?'left pocket':a.lane>=a.seg.L?'right bay':a.lane+1+'/'+a.seg.L}<br>`+
+    `<span class="k">lead gap</span> ${a.gap<1e8?a.gap.toFixed(1)+' m':'-'} &nbsp;<span class="k">obstacle</span> ${a.obs?a.obs.kind+' '+a.obsD.toFixed(1)+' m':'-'}<br>`+
+    `<span class="k">aggressiveness &alpha;</span> ${a.ag.toFixed(2)}<br><span class="k">distraction D</span> ${a.di.toFixed(2)} ${a.lapseT>0?'<span class="warn">LAPSE '+a.lapseT.toFixed(1)+'s</span>':''}<br>`+
+    `<span class="k">headway T</span> ${a.T.toFixed(2)} s &nbsp;<span class="k">sight</span> ${(PR*W.pr).toFixed(0)} m<br><span class="k">junction</span> ${a.why||(a.go?'clear to enter':'-')}<br>`+
+    `<span class="k">destination</span> ${a.dest?'<span class="ok">'+Math.round(hyp(a.dest.x-a.x,a.dest.z-a.z))+' m away'+(a.route?', '+a.route.length+' block(s) to go':'')+'</span> (X: clear)':a.arrived?'<span class="ok">arrived</span>':'none - click a road'}`;
+  else h=`<b>PEDESTRIAN #${a.id}</b><br><span class="k">speed</span> ${a.v.toFixed(1)} m/s<br><span class="k">state</span> <span class="${a.state==='jay'?'warn':'ok'}">${{walk:'walking sidewalk',wait:'waiting at curb',cross:'crossing (zebra)',jay:'JAYWALKING'}[a.state]}</span><br><span class="k">impatience</span> ${a.imp.toFixed(2)}<br><span class="k">waited</span> ${a.state==='wait'?a.wait.toFixed(1)+' s':'-'}`;
+  if(a.kind==='veh'&&!a.isPlayer&&a.probs&&simT-a.aiT<1.5)h+=`<br><span class="k">neural intent</span> <span class="ok">${INTENTS[a.intent]}</span> ${(a.probs[a.intent]*100).toFixed(0)}%${(P.aiMode===MODES[3]||v2on())&&a.act>=0?' <span class="warn">sampled '+INT_S[a.act]+'</span>':aiP(a)?'':' <span class="k">(advisory)</span>'} <span class="k">reward</span> ${a.rw.toFixed(1)}${v2on()&&simT-a.actT<2.5?'<br><span class="k">v2 heads</span> turn '+a.turn+(a.dest?' (Dijkstra)':'')+', lane '+['left','keep','right'][a.lanePref+1]+', headway/gap x'+a.asF.toFixed(1):''}<br><span class="k">teacher</span> ${INTENTS[labelOf(a)]}`;
+  $('insp').innerHTML=h;
+}
+
+/* ============================== NEURAL DRIVING BRAINS (page side) ==============================
+   Hierarchy: perception (inputs) -> decision network (batched, in traffic-sim-worker.js) -> geometric actuation (IDM / MOBIL / detours above).
+   v1  tactical gate (12 inputs -> intent): cloned from the procedural driver, optionally fine-tuned by RL.
+   v2  strategic network (20 inputs -> intent, turn, lane preference, assertiveness, value): PPO from random weights, no demonstrations.
+   Neither network steers or brakes. They choose among legal options; lane, gap, signal, AEB and friction logic stay procedural,
+   and every hesitation a network causes is time-bounded. */
+const NF=12,NF2=20,STRIDE=30,OX=20,AUTO_N=20000;   // row: 20 inputs | OX: x z fx fz len wid id flags label reward
+const MODES=['Procedural (IDM)','Behavioral Clone (AI)','Training Mode','RL Fine-tune','IDM + greedy turns','Strategic net v2 (PPO)'];
+const ONEHOT=[0,1,2,3].map(a=>Float32Array.from({length:4},(_,j)=>j===a?1:0));
+const INTENTS=['CRUISE_MAINTAIN','YIELD_AND_WAIT','AGGRESSIVE_NUDGE','OVERTAKE_MERGE'],INT_S=['CRUISE','YIELD','NUDGE','OVERTAKE'];
+const HEAD_UI=[['intent',0,INT_S],['turn at next junction',4,['LEFT','STRAIGHT','RIGHT']],['lane preference',7,['LEFT','KEEP','RIGHT']],['assertiveness',10,['CAUTIOUS x1.2','NORMAL','ASSERTIVE x0.8']]];
+const IN_NAMES=['TTC to lead','approach dv','conflict gap','lead braking','dist stop line','signal ahead','blind spot L','blind spot R','aggressiveness','impatience','friction','lane offset',
+  'queue exit LEFT','queue exit STRAIGHT','queue exit RIGHT','signal timer','queue my lane','queue left lane','queue right lane','own speed'];
+const NORM={ttcMaxS:10,dvMax:15,gapMaxS:8,impatienceMaxS:20,muDry:.85,laneWidthM:LW,stopLineDistance:'divided by the speed-dependent decision zone max(10, v^2/3+14) m',
+  blindSpot:'1 - clearance / (0.3 x perception range)',signal:{red:1,stopSign:.75,yellow:.5,permissive:.25,green:0,leftArrow:-1},
+  queueFill:'stopped cars x 7.5 m / (segment length x lanes), capped at 1',signalTimerS:'signed seconds / 30: + green remaining, - red remaining',
+  laneQueue:'stopped cars ahead x 7.5 m / room ahead, capped at 1; 1 where the lane does not exist',ownSpeed:'speed / speed limit, capped at 1.5'};
+const brain={worker:null,ready:false,err:'',busy:0,tickN:0,model:null,model2:null,hist:[],training:false,auto:false,memN:0,counts:[0,0,0,0],ms:0,inferN:0,sel:null,sel2:null,tps:0,
+  gone:[],rlHist:[],rl2Hist:[],train2:false,all:false,bench:false,onTick:null,benchResult:null,result:null,waiters:{},pipe:'',pipeStop:false,pipeHist:[]};
+const v2on=()=>P.aiMode===MODES[5];
+// probabilities the gates may use. v1 AI: only near the camera (spatial LOD), only while fresh (10 Hz ticks).
+// RL fine-tuning and the v2 network: the sampled intent (held ~1 s) drives the same gates as a one-hot distribution, for every car.
+const aiP=v=>P.aiMode===MODES[3]||v2on()?(v.act>=0&&simT-v.actT<2.5?ONEHOT[v.act]:null):P.aiMode===MODES[1]&&(v.near||brain.all)&&simT-v.aiT<.6?v.probs:null;
+const asF=v=>v2on()&&simT-v.actT<2.5?v.asF:1;        // v2 assertiveness head: scales headway T and the critical gap (1.2 cautious .. 0.8 assertive)
+const lanePref=v=>v2on()&&simT-v.actT<2.5?v.lanePref:0;      // v2 lane head: -1 left, 0 keep, +1 right (a request; MOBIL safety checks still decide)
+const aiNudge=v=>{const p=aiP(v);return !p||p[2]>=.2||v.stuckT>6;};
+function aiGo(v,dF){                               // may this car use its legal right to enter the junction?
+  const p=aiP(v); if(!p||v.waitT>=3+5*(1-v.ag)||v.v*v.v/(2*Math.max(dF,.5))>2.5)return true;      // bounded hesitation, never a panic stop
+  if(p[1]>p[0]&&p[1]>p[2]&&p[1]>p[3])return false;                                             // YIELD_AND_WAIT
+  return !(v.gapGo&&p[2]<.2);                                                                // gap-acceptance entries need AGGRESSIVE_NUDGE
+}
+function sigCode(v){
+  const sg=v.seg,n=v.mode==='junc'?v.boxNode:sg.to,k=v.mode==='junc'?v.curve.k:sg.k; if(!n||!n.real)return 0;
+  if(n.type==='sig'){if(v.turn==='L'){const q=n.sl[k];return q==='G'?-1:q==='F'?.25:q==='Y'?.5:1;}const q=n.st[k];return q==='G'?0:q==='Y'?.5:1;}
+  return n.type==='awsc'||!(k&1)?.75:v.turn==='L'?.25:0;
+}
+function conflictGap(v){                           // seconds until conflicting / oncoming traffic claims the space ahead (0 = occupied), normalised
+  const sg=v.seg; if(v.mode!=='seg')return 1; let t=NORM.gapMaxS;
+  if(sg.to.real&&sg.len-v.s<60){
+    const n=sg.to,k=sg.k,mv=k*3+TI[v.turn]; if(boxBusy(n,mv,v)||!exitSpace(v,getCurve(n,k,turnLane(v),v.turn)))return 0;
+    for(let kb=0;kb<4;kb++){if(kb===k)continue;const sb=n.in[kb];
+      for(const w of sb.vehs){if(!n.conf[mv][kb*3+TI[w.turn]]||!willEnter(n,kb,w))continue;const q=(sb.len-w.s-w.len/2)/Math.max(w.v,3);if(q<t)t=q;}}
+  }else{const so=sg.len-v.s;for(const w of sg.twin.vehs){if(w.lane>0)continue;const d=so-w.s;if(d>0){const q=d/(w.v+v.v+1);if(q<t)t=q;}}}
+  return Math.max(0,t)/NORM.gapMaxS;
+}
+function features(v,b,o){                          // inputs 0..11 (egocentric, tactical); 6 and 7 (blind spots) are cast in the worker
+  const sg=v.seg,ld=v.lead; let gap=v.gap,lv=ld?ld.v:0,br=ld&&ld.brake?1:0;
+  if(v.obs&&v.obsD<gap){gap=v.obsD;lv=v.obsV;br=v.obs.brake?1:0;}
+  const dv=v.v-lv;
+  b[o]=gap>=1e8?1:clamp(gap/Math.max(dv,1)/NORM.ttcMaxS,0,1);
+  b[o+1]=gap>=1e8?0:clamp(dv/NORM.dvMax,-1,1);
+  b[o+2]=conflictGap(v);
+  b[o+3]=br;
+  b[o+4]=v.mode==='junc'?0:!sg.to.real?1:clamp((sg.len-v.s-v.len/2)/Math.max(10,v.v*v.v/3+14),0,1);
+  b[o+5]=sigCode(v);
+  b[o+8]=v.ag; b[o+9]=clamp(v.waitT/NORM.impatienceMaxS,0,1); b[o+10]=W.mu/NORM.muDry;
+  b[o+11]=v.mode==='junc'?clamp(v.jOff/LW,-1,1):clamp((laneOff(sg.L,v.laneF)-laneOff(sg.L,v.lane))/LW,-1,1);
+}
+const qFill=sg=>{let n=0;for(const w of sg.vehs)if(w.v<.5)n++;return Math.min(1,n*7.5/(sg.len*sg.L));};      // how full of stopped cars a segment is
+function sigTimer(n,k){                            // signed time until my through signal changes: + green left, - red left
+  if(n.type!=='sig')return 0; const r=(n.g===0?[1,3]:[0,2]).indexOf(k),t=n.t;
+  if(r<0)return -clamp((n.G+5-t)/30,0,1);                                   // the other axis is being served
+  const ls=n.ld[r]>0?n.ld[r]+4:0;
+  return t<ls?-(ls-t)/30:t<n.G?clamp((n.G-t)/30,0,1):t<n.G+3.5?.01:-1;
+}
+function features2(v,b,o){                         // inputs 12..19 (strategic): exit queues, signal timer, lane queues, own speed
+  const sg=v.seg,n=sg.to;
+  if(v.mode==='seg'){
+    if(n.real){b[o+12]=qFill(n.out[(sg.k+3)%4]);b[o+13]=qFill(n.out[sg.k]);b[o+14]=qFill(n.out[(sg.k+1)%4]);b[o+15]=sigTimer(n,sg.k);}
+    const q=[0,0,0],c=7.5/Math.max(sg.len-v.s,15);
+    for(const w of sg.vehs){if(w.v>=.5||w.s<=v.s)continue;const dl=w.lane-v.lane;if(dl>=-1&&dl<=1)q[dl+1]++;}
+    b[o+16]=Math.min(1,q[1]*c);b[o+17]=v.lane-1<0?1:Math.min(1,q[0]*c);b[o+18]=v.lane+1>=sg.L?1:Math.min(1,q[2]*c);
+  }
+  b[o+19]=Math.min(1.5,v.v/(P.speedLimit/3.6));
+}
+function labelOf(v){                               // what the procedural driver is doing right now, as a tactical intent
+  if(v.byp||v.det||v.rev||v.creep>0||(v.go&&v.gapGo&&(v.mode==='junc'||v.seg.len-v.s<40)))return 2;
+  if(v.laneOld!==v.lane||(v.swT>0&&!v.soft))return 3;
+  if(v.stopping||(v.obs&&v.obsD<v.gap&&v.acc<-.3))return 1;
+  return 0;
+}
+function brainTick(){                              // 20 Hz: one transferable buffer with the whole fleet -> worker
+  const b=brain; if(!b.ready||b.busy>2)return false;
+  const ai=P.aiMode===MODES[1],rec=P.aiMode===MODES[2],rl=P.aiMode===MODES[3],v2=v2on(),n=vehs.length+(player.car.active?1:0),buf=new Float32Array(n*STRIDE);
+  b.tickN++;
+  for(let i=0;i<vehs.length;i++){
+    const v=vehs[i],o=i*STRIDE,par=b.tickN+v.id,live=!(v.crashT>0)&&!(v.dp>0);
+    const dec=rl&&par%20===0&&live;                                                       // v1 RL decision point: once per second per car
+    const dec2=v2&&live&&(v.needTurn===1||simT-v.decT>=1);                                // v2 decision: once per second, and at once on entering a segment
+    if(dec||dec2){buf[o+OX+9]=v.rw;v.rw=0;v.decT=simT;}                                   // reward earned since the previous decision
+    const peek=v2&&v===sel&&!dec2&&!(par&1)&&live;                                        // inspector: forward pass only
+    const nn=dec||(!v2&&((ai&&(v.near||b.all))||v===sel)&&!(par&1)&&live);                // v1: each near car 10 Hz, staggered over two ticks
+    const rc=rec&&par%10===0&&!v.aeb&&!v.abs&&v.lapseT<=0&&live;                         // recorder: 2 Hz per car, only while driving smoothly
+    if(nn||rc||dec2||peek){features(v,buf,o);buf[o+OX+8]=labelOf(v);}
+    if(dec2||peek)features2(v,buf,o);
+    buf[o+OX]=v.x;buf[o+OX+1]=v.z;buf[o+OX+2]=v.fx;buf[o+OX+3]=v.fz;buf[o+OX+4]=v.len;buf[o+OX+5]=v.wid;buf[o+OX+6]=v.id;
+    buf[o+OX+7]=(nn?1:0)|(rc?2:0)|(v.crashT>0?4:0)|(v.mode==='junc'&&v.turn!=='S'?16:0)|(dec?32:0)|(dec2?64:0)|(peek?128:0)|(dec2&&v.needTurn?256:0);
+    if(dec2&&v.needTurn)v.needTurn=2;                                                     // turn requested, answer pending
+  }
+  if(player.car.active){const c=player.car,o=vehs.length*STRIDE;buf[o+OX]=c.x;buf[o+OX+1]=c.z;buf[o+OX+2]=c.fx;buf[o+OX+3]=c.fz;buf[o+OX+4]=c.len;buf[o+OX+5]=c.wid;buf[o+OX+6]=-1;buf[o+OX+7]=8;}
+  b.busy++;
+  const gone=b.gone.length?Float32Array.from(b.gone):null; b.gone.length=0;
+  b.worker.postMessage({type:'tick',buf,n,gone,train2:b.train2,bsR:PR*W.pr*.3,collide:!P.headless,sel:sel&&sel.kind==='veh'&&!sel.isPlayer?sel.id:-1},[buf.buffer]);
+  return true;
+}
+function brainMsg(d){
+  const b=brain,wt=b.waiters[d.type];
+  if(d.type==='error'){b.pipeStop=true;for(const k in b.waiters){b.waiters[k](null);delete b.waiters[k];}}
+  if(d.type==='tick'){
+    b.busy--;b.memN=d.memN;b.counts=d.counts;b.ms=d.ms;b.inferN=d.m+d.m2; const o=d.out,o2=d.out2;
+    for(let r=0;r<d.m;r++){const v=vehById.get(o[r*6]);if(!v)continue;
+      if(!v.probs||simT-v.aiT>1){v.probs=v.probs||new Float32Array(4);for(let j=0;j<4;j++)v.probs[j]=o[r*6+1+j];}
+      else for(let j=0;j<4;j++)v.probs[j]=.5*v.probs[j]+.5*o[r*6+1+j];                       // smooth out single-tick flicker
+      let am=0;for(let j=1;j<4;j++)if(v.probs[j]>v.probs[am])am=j;v.intent=am;v.aiT=simT;
+      if(o[r*6+5]>=0){v.act=o[r*6+5];v.actT=simT;}}                                          // v1 RL: intent sampled from the softmax, held until the next decision
+    for(let r=0;r<d.m2;r++){const p=r*20,v=vehById.get(o2[p]);if(!v)continue;               // v2: all four heads were sampled in the worker
+      if(v===sel)b.sel2=o2.slice(p+6,p+20);
+      v.probs=v.probs||new Float32Array(4);for(let j=0;j<4;j++)v.probs[j]=o2[p+6+j];v.aiT=simT;
+      if(!o2[p+1])continue;                                                                  // peek for the inspector: nothing to apply
+      v.act=v.intent=o2[p+2];v.actT=simT;v.lanePref=o2[p+4]-1;v.asF=1.2-.2*o2[p+5];
+      if(v.needTurn){v.needTurn=0;const sg=v.seg;                                            // turn head: used once per segment, only without a user destination
+        if(!v.dest&&v.mode==='seg'&&sg.to.real&&!v.boxNode&&sg.len-v.s>14){v.turn='LSR'[o2[p+3]];v.route=null;v.go=false;v.goKnown=false;}}
+    }
+    if(b.onTick){const f=b.onTick;b.onTick=null;f();}
+    for(let k=0;k<d.pairs.length;k+=2){const a=vehById.get(d.pairs[k]),c=vehById.get(d.pairs[k+1]);if(a&&c&&!(a.crashT>0&&c.crashT>0))crash(a,c);}
+    if(d.selIn){b.sel=d.selIn;drawRoof();}
+    if(b.auto&&!b.training&&b.memN>=AUTO_N)brainTrain();
+  }
+  else if(d.type==='progress'){b.hist.push(d);drawGraph();}
+  else if(d.type==='rl'){b.rlHist.push(d);if(b.rlHist.length>300)b.rlHist.shift();drawGraph();}
+  else if(d.type==='rl2'){b.rl2Hist.push(d);if(b.rl2Hist.length>400)b.rl2Hist.shift();drawGraph();}
+  else if(d.type==='trained'){b.training=false;b.model=d.model;const t=d.model.trained;
+    if(!b.pipe)msg(`Brain trained: ${(t.valAcc*100).toFixed(1)}% cloning accuracy (${t.samples} samples, ${t.seconds}s)`,5);
+    if(b.auto){b.auto=false;P.aiMode=MODES[1];}}
+  else if(d.type==='model'){if(d.version===2)b.model2=d.model;else b.model=d.model;if(d.imported&&!b.pipe)msg(`Model weights loaded (${d.version===2?'v2 strategic network':'v1 tactical gate'})`,3);}
+  else if(d.type==='error'){b.training=false;b.auto=false;P.headless=false;msg(d.error,5);}
+  else if(d.type==='ready'){b.ready=true;b.worker.postMessage({type:'getModel'});
+    const saved=k=>{try{return JSON.parse(localStorage.getItem(k));}catch(x){return null;}},s1=saved('trafficBrain'),s2=saved('trafficBrain2');
+    if(s1)b.worker.postMessage({type:'setModel',model:s1});          // a result from an earlier session wins over the shipped clone
+    else fetch('brain-pretrained.json').then(r=>r.ok?r.json():null).then(m=>{if(m)b.worker.postMessage({type:'setModel',model:m});}).catch(()=>{});
+    if(s2)b.worker.postMessage({type:'setModel',model:s2});}
+  if(wt&&d.type!=='error'){delete b.waiters[d.type];wt(d);}
+}
+function brainStart(){
+  try{const w=new Worker('traffic-sim-worker.js');brain.worker=w;w.onmessage=e=>brainMsg(e.data);
+    w.onerror=e=>{brain.ready=false;brain.err='worker failed to load - serve this folder over http';e.preventDefault();};}
+  catch(x){brain.err='web workers unavailable ('+x.message+')';}
+}
+function brainTrain(){
+  if(!brain.ready)return msg('Neural worker is not running: '+brain.err,4);
+  if(brain.training)return;
+  brain.training=true;brain.hist.length=0;P.headless=false;brain.worker.postMessage({type:'train',epochs:200});
+}
+function exportModelJSON(){                         // exports the network of the current mode: v2 in "Strategic net" mode, otherwise v1
+  const two=v2on()&&brain.model2,m=two?brain.model2:brain.model; if(!m)return msg('No model to export yet',3);
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([JSON.stringify({...m,inputs:IN_NAMES.slice(0,two?NF2:NF),outputs:two?HEAD_UI.map(h=>({head:h[0],offset:h[1],actions:h[2]})).concat({head:'value',offset:13}):INTENTS,norm:NORM})],{type:'application/json'}));
+  a.download=two?'traffic-brain-v2.json':'traffic-brain.json';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+}
+function importModelJSON(file){                    // version, shapes and values are validated in the worker before they replace the live weights
+  if(!brain.ready)return msg('Neural worker is not running: '+brain.err,4);
+  file.text().then(t=>brain.worker.postMessage({type:'setModel',model:JSON.parse(t)})).catch(x=>msg('Import failed: '+x.message,4));
+}
+window.exportModelJSON=exportModelJSON; window.importModelJSON=importModelJSON;
+// live loss / fitness graph
+function drawGraph(){
+  const c=$('nnGraph'),g=c.getContext('2d'),h=brain.hist,Wd=c.width,Hd=c.height;
+  g.fillStyle='#0c1018';g.fillRect(0,0,Wd,Hd);
+  g.strokeStyle='#2a3442';g.setLineDash([3,3]);g.beginPath();g.moveTo(0,Hd*.1);g.lineTo(Wd,Hd*.1);g.stroke();g.setLineDash([]);     // 90 % line
+  g.font='9px monospace';g.fillStyle='#5d6b7c';g.fillText('90%',2,Hd*.1+9);
+  const ph=brain.pipeHist;
+  if(ph.length){                                    // training pipeline: benchmark fitness of each step against the procedural driver
+    const tg=ph[0].target,lo=Math.min(tg,...ph.map(e=>e.score))-.5,hi=Math.max(tg,...ph.map(e=>e.score))+.5,Y=x=>Hd-14-(x-lo)/(hi-lo)*(Hd-26),bw=Math.min(26,(Wd-20)/ph.length-4);
+    ph.forEach((e,i)=>{g.fillStyle=e.score>tg?'#7be08a':e.kept?'#7fd4ff':'#55657a';g.fillRect(10+i*(bw+4),Y(e.score),bw,Hd-14-Y(e.score));g.fillStyle='#9fb0c3';g.fillText(e.label.slice(0,4),10+i*(bw+4),Hd-3);});
+    g.strokeStyle='#ffd24a';g.setLineDash([4,3]);g.beginPath();g.moveTo(0,Y(tg));g.lineTo(Wd,Y(tg));g.stroke();g.setLineDash([]);
+    g.fillStyle='#ffd24a';g.fillText('IDM '+tg.toFixed(2),Wd-62,Y(tg)-3);g.fillStyle='#dfe6ee';g.fillText('benchmark reward per car-minute, by step',6,9);return;
+  }
+  if(P.aiMode===MODES[3]||v2on()){                   // RL: mean return per policy update
+    const q=v2on()?brain.rl2Hist:brain.rlHist; if(!q.length){g.fillText(v2on()?'v2: no PPO update yet (4096 decisions per update while training)':'RL: waiting for the first policy update (2048 decisions)',8,Hd/2);return;}
+    const lo=Math.min(...q.map(e=>e.ret)),hi=Math.max(...q.map(e=>e.ret)),sp=Math.max(hi-lo,.01);
+    g.strokeStyle='#ffd24a';g.beginPath();q.forEach((e,i)=>{const x=q.length>1?i/(q.length-1)*Wd:0,y=Hd-6-(e.ret-lo)/sp*(Hd-12);i?g.lineTo(x,y):g.moveTo(x,y);});g.stroke();
+    g.fillStyle='#ffd24a';g.fillText('mean return '+q[q.length-1].ret.toFixed(2)+'  (update '+q[q.length-1].upd+', range '+lo.toFixed(2)+' .. '+hi.toFixed(2)+')',6,Hd-4);return;
+  }
+  if(!h.length){g.fillText('loss / accuracy graph: train to populate',60,Hd/2);return;}
+  const n=Math.max(h[0].epochs,2),mx=Math.max(...h.map(e=>e.loss),.01);
+  const line=(f,col)=>{g.strokeStyle=col;g.beginPath();h.forEach((e,i)=>{const x=i/(n-1)*Wd,y=Hd-f(e)*Hd;i?g.lineTo(x,y):g.moveTo(x,y);});g.stroke();};
+  line(e=>e.loss/mx,'#ff7a6b');line(e=>e.acc,'#7fd4ff');line(e=>e.val,'#7be08a');
+  const e=h[h.length-1];g.fillStyle='#ff7a6b';g.fillText('loss '+e.loss.toFixed(3),Wd-150,Hd-26);g.fillStyle='#7fd4ff';g.fillText('train acc '+(e.acc*100).toFixed(1)+'%',Wd-150,Hd-15);
+  g.fillStyle='#7be08a';g.fillText('val acc '+(e.val*100).toFixed(1)+'%  ep '+e.epoch+'/'+e.epochs,Wd-150,Hd-4);
+}
+/* Benchmark on identical seeded traffic. Math.random and the worker's sampler are re-seeded for each run and the sim is stepped in
+   lock-step with the worker (one reply per tick), so a (mode, seed) pair is reproducible. The network drives every car here. */
+const BENCH_SEEDS=[11,22,33],HOLDOUT_SEEDS=[44,55,66],BENCH_T=90,RL_ROUND_T=300,RL_MAX_ROUNDS=4;      // RL_MAX_ROUNDS only limits the cloning pipeline
+// step the simulation in lock-step with the worker (one reply per tick); false when a training pipeline was cancelled
+async function drive(sec,eachSecond){
+  for(let f=0;f<sec*60;f++){
+    step(1/60);
+    if(brain.busy>0)await new Promise(r=>{brain.onTick=r;setTimeout(r,250);});
+    if(eachSecond&&f%60===59)eachSecond();
+    if(brain.pipeStop)return false;
+  }
+  return true;
+}
+async function benchRun(mode,seed){                 // one seeded run -> metrics
+  const rnd=Math.random,was=brain.train2; Math.random=mulberry(seed); brain.train2=false; brain.worker.postMessage({type:'seed',seed});
+  P.aiMode=mode;vid=0;frame=0;dpT=4;pedAcc=0;brain.tickN=0;brain.busy=0;reset();
+  let sp=0,st=0,ns=0;const turns=[0,0,0];
+  await drive(BENCH_T,()=>{for(const v of vehs){sp+=v.v;if(v.v<.3)st++;ns++;if(v.mode==='seg'&&v.seg.to.real)turns[TI[v.turn]]++;}});
+  Math.random=rnd; brain.train2=was; brain.worker.postMessage({type:'seed',seed:null}); ns=Math.max(ns,1);
+  const tn=Math.max(1,turns[0]+turns[1]+turns[2]);
+  return{mode,seed,trips:stats.exits,kmh:sp/ns*3.6,stopped:st/ns*100,reward:stats.reward/ns*60,crashes:stats.crashes,pedHits:stats.pedHits,redRuns:stats.redRuns,aebs:stats.aebs,towed:stats.stuck,
+    left:turns[0]/tn*100,straight:turns[1]/tn*100,right:turns[2]/tn*100,cars:ns/BENCH_T};
+}
+function benchBegin(){const keep={aiMode:P.aiMode,pause:P.pause,lod:P.lod,headless:P.headless};
+  brain.bench=true;brain.all=true;P.pause=true;P.headless=false;P.lod=false;select(null);return keep;}
+function benchEnd(keep){Object.assign(P,keep);brain.all=false;brain.bench=false;reset();}
+const BENCH_ROWS=[['trips','trips completed',0],['kmh','mean speed (km/h)',1],['stopped','cars stopped (%)',1],['reward','reward per car-minute',2],['crashes','crashes',0],['pedHits','pedestrian hits',0],
+  ['redRuns','red-light runs',0],['aebs','emergency brakings',0],['towed','towed (stuck)',0],['cars','cars on the map',0],['straight','planned turns: straight (%)',0],['left','planned turns: left (%)',0]];
+function benchHTML(runs,modes,caption){
+  const col=(m,k,d)=>{const x=runs.filter(r=>r.mode===m).map(r=>r[k]);return `<td><b>${(x.reduce((a,c)=>a+c,0)/x.length).toFixed(d)}</b> <span class="k">(${x.map(q=>q.toFixed(d)).join(', ')})</span></td>`;};
+  return `<div class="k" style="margin-top:6px">${caption}</div><table><tr><th></th>${modes.map(m=>`<th>${m}</th>`).join('')}</tr>`+
+    BENCH_ROWS.map(([k,n,d])=>`<tr><td class="k">${n}</td>${modes.map(m=>col(m,k,d)).join('')}</tr>`).join('')+'</table>';
+}
+function benchShow(title,html,runs){brain.benchResult=runs;$('bench').innerHTML=`<b>${title}</b> &nbsp;<span class="k">mean (per seed), ${BENCH_T} s runs - click to close</span>`+html;$('bench').style.display='block';}
+async function benchmark(){
+  const b=brain; if(b.bench)return; if(!b.ready)return msg('Neural worker is not running: '+b.err,4);
+  const keep=benchBegin(),runs=[],modes=[MODES[0],MODES[4],MODES[1]].concat(b.model2?[MODES[5]]:[]);
+  for(const mode of modes)for(const seed of BENCH_SEEDS){
+    msg(`Benchmark ${runs.length+1}/${BENCH_SEEDS.length*modes.length}: ${mode}, seed ${seed}`,120);
+    runs.push(await benchRun(mode,seed));
+  }
+  benchEnd(keep);benchShow('BENCHMARK',benchHTML(runs,modes,`seeds ${BENCH_SEEDS.join(', ')}`),runs);msg('Benchmark finished',3);
+}
+const brainWait=type=>new Promise(r=>{brain.waiters[type]=r;});      // resolves with the next worker message of that type
+/* AUTOMATIC TRAINING, two flavours of the same loop (train -> seeded benchmark -> keep the best weights, roll back what is worse or
+   less safe -> confirm on fresh seeds -> stop at P.target % of the IDM score; click the button again to cancel; best weights are saved):
+     trainLoop(false)  v1 gate: record the IDM / MOBIL driver -> behavioural cloning -> RL fine-tuning rounds plus a search on the
+                       three output biases (at most RL_MAX_ROUNDS rounds).
+     trainLoop(true)   PURE RL, v2 strategic network: random weights, no demonstrations, PPO in the worker (GAE, clipped policy loss over
+                       all heads, value loss, entropy bonus). It keeps going until the target is confirmed or you cancel.
+   Picking the best of many noisy benchmark runs flatters the result, so the target must be met on the tuning seeds AND hold on fresh seeds
+   the weights were never tuned on. IDM is only the safety layer and the opponent; "IDM + greedy turns" is benchmarked for comparison. */
+const PROBE_NAMES=[,'YIELD','NUDGE','OVERTAKE'];
+async function trainLoop(v2){
+  const b=brain; if(b.pipe){b.pipeStop=true;return;} if(b.bench)return; if(!b.ready)return msg('Neural worker is not running: '+b.err,4);
+  const keep=benchBegin(),t0=performance.now(),mean=(rs,k)=>rs.reduce((a,r)=>a+r[k],0)/rs.length,tag=v2?'PURE RL v2':'ONE-CLICK';
+  const AI=v2?MODES[5]:MODES[1],KEY=v2?'trafficBrain2':'trafficBrain',cur=()=>v2?b.model2:b.model,mins=()=>((performance.now()-t0)/60000).toFixed(1);
+  const say=t=>{b.pipe=t;msg(`${tag}: ${t}  (click the button again to cancel)`,3600);};
+  const bench=async(mode,seeds=BENCH_SEEDS)=>{const rs=[];for(const sd of seeds){rs.push(await benchRun(mode,sd));if(b.pipeStop)throw 0;}return rs;};
+  const load=async model=>{const w=brainWait('model');b.worker.postMessage({type:'setModel',model});await w;};
+  const save=()=>{                                   // remembered across reloads; a new run never overwrites a saved network that benchmarked better
+    try{const prev=JSON.parse(localStorage.getItem(KEY)),now=target?best.score/target*100:0;
+      if(!prev||!(prev.benchPct>now))localStorage.setItem(KEY,JSON.stringify({...cur(),benchPct:+now.toFixed(1)}));}catch(x){}};
+  b.pipeStop=false;b.pipeHist=[];b.rlHist.length=0;b.rl2Hist.length=0;let best=null,proc=null,greedy=null,target=0,harmP=0,ver=0,hp=null,hg=null,hold=null,live=true;
+  const harmOf=rs=>mean(rs,'crashes')+mean(rs,'pedHits'),goal=()=>P.target/100,pct=()=>(best.score/target*100).toFixed(1);
+  const won=()=>best.score>target*goal()&&best.harm<=harmP;
+  const holdout=async()=>{                           // fresh-seed result of the best weights (cached until they change)
+    if(!hp){say('benchmarking the procedural driver on fresh seeds');hp=await bench(MODES[0],HOLDOUT_SEEDS);}
+    if(!hold||hold.ver!==ver){say(`confirming "${best.label}" on fresh seeds`);if(!live){await load(best.model);live=true;}hold={ver,ha:await bench(AI,HOLDOUT_SEEDS)};}
+    const rh=mean(hold.ha,'reward')/mean(hp,'reward'),pass=rh>Math.max(1,goal()-.02)&&harmOf(hold.ha)<=harmOf(hp);
+    // not confirmed: its tuning score was partly luck. Re-rate it with all six seeds so that it stops blocking better candidates.
+    if(!pass&&!hold.demoted){hold.demoted=true;best.score=Math.min(best.score,target*(best.score/target+rh)/2);}
+    return pass;
+  };
+  const confirmed=async()=>won()&&await holdout();
+  const report=async(win,cancelled)=>{               // load + save the best weights, benchmark everything on fresh seeds, show both tables
+    if(!hp||!hold||hold.ver!==ver){live=false;await holdout();}
+    await load(best.model);live=true;save();
+    if(v2&&!hg){say('benchmarking IDM + greedy turns on fresh seeds');hg=await bench(MODES[4],HOLDOUT_SEEDS);}
+    const modes=v2?[MODES[0],MODES[4],AI]:[MODES[0],AI],tune=proc.concat(greedy||[],best.runs),hold2=hp.concat(hg||[],hold.ha),r=x=>mean(x,'reward');
+    const beatsG=v2&&r(best.runs)>r(greedy)&&r(hold.ha)>r(hg),head=cancelled?'cancelled - best network so far':win?'TARGET REACHED':'best network found, target '+P.target+'% not confirmed';
+    b.result={win,cancelled:!!cancelled,beatsGreedy:v2?beatsG:null,minutes:+mins(),tuning:tune,holdout:hold2,label:best.label};
+    keep.aiMode=AI;
+    benchShow(`${tag}: ${head} (${pct()}% of IDM on the tuning seeds)`+(v2?(beatsG?' - also beats IDM + greedy turns':' - does NOT beat IDM + greedy turns'):''),
+      benchHTML(tune,modes,`tuning seeds ${BENCH_SEEDS.join(', ')}`)+benchHTML(hold2,modes,`fresh seeds ${HOLDOUT_SEEDS.join(', ')} (never used for tuning)`)+
+      `<div style="margin-top:6px"><span class="k">last kept step</span> ${best.label} &nbsp;<span class="k">time</span> ${mins()} min</div>`,tune.concat(hold2));
+    msg(`${tag}: ${head} - tuning AI ${best.score.toFixed(2)} vs IDM ${target.toFixed(2)}; fresh seeds AI ${r(hold.ha).toFixed(2)} vs IDM ${r(hp).toFixed(2)}`+
+      (v2?` vs greedy ${r(hg).toFixed(2)}`:'')+'. The best weights of this run are live (and saved, unless a better network was already saved).',16);
+  };
+  const test=async label=>{                          // benchmark the live weights; keep them if they are the best so far
+    say(`${label}: benchmarking (best ${best?pct():'-'}% of IDM, target ${P.target}%, ${mins()} min)`);
+    const ai=await bench(AI),score=mean(ai,'reward'),harm=harmOf(ai),ok=!best||harm<best.harm||(harm<=best.harm&&score>best.score);
+    b.pipeHist.push({label,score,target,kept:ok});if(b.pipeHist.length>40)b.pipeHist.shift();drawGraph();
+    if(ok){best={score,harm,runs:ai,model:cur(),label};ver++;live=true;save();}
+    // v1: always roll back. v2 (PPO): roll back only when less safe or clearly worse (beyond benchmark noise), otherwise keep learning from here.
+    else if(!v2||harm>best.harm||score<best.score-.03*target){await load(best.model);live=true;}
+    else live=false;
+    return ok;
+  };
+  try{
+    if(v2){
+      say('starting from random weights (no demonstrations)');
+      const w=brainWait('model');b.worker.postMessage({type:'init2'});await w;
+    }else{
+      say('recording the IDM / MOBIL driver');
+      b.worker.postMessage({type:'clear'});b.memN=0;P.aiMode=MODES[2];reset();
+      while(b.memN<AUTO_N)if(!await drive(5))throw 0;
+      say('behavioural cloning, 200 epochs');
+      const tr=brainWait('trained');brainTrain();if(!await tr)throw 0;
+    }
+    say('benchmarking the procedural driver');
+    proc=await bench(MODES[0]);target=mean(proc,'reward');harmP=harmOf(proc);
+    if(v2){say('benchmarking IDM + greedy turns');greedy=await bench(MODES[4]);}
+    await test(v2?'RND':'BC');
+    let lr=2e-4,delta=2;const sign=[0,-1,1,1];
+    for(let round=1;(v2||round<=RL_MAX_ROUNDS)&&!await confirmed();round++){
+      if(v2){                                          // PPO round: the worker collects trajectories and updates every 4096 decisions
+        const u=b.rl2Hist.length?b.rl2Hist[b.rl2Hist.length-1].upd:0;
+        say(`PPO round ${round}: training (${u} updates, best ${pct()}% of IDM, target ${P.target}%, ${mins()} min)`);
+        P.aiMode=MODES[5];b.train2=true;b.worker.postMessage({type:'rlReset'});reset();
+        const okRun=await drive(RL_ROUND_T);b.train2=false;if(!okRun)throw 0;
+        const w=brainWait('model');b.worker.postMessage({type:'getModel',version:2});await w;
+        await test('PPO'+round);
+        continue;
+      }
+      say(`RL round ${round}: fine-tuning (best ${pct()}% of IDM, target ${P.target}%, ${mins()} min)`);
+      P.aiMode=MODES[3];b.worker.postMessage({type:'rlReset'});b.worker.postMessage({type:'rlConfig',lr});reset();
+      if(!await drive(RL_ROUND_T))throw 0;
+      const w=brainWait('model');b.worker.postMessage({type:'getModel'});await w;
+      if(!await test('RL'+round))lr=Math.max(5e-5,lr*.6);          // RL made it worse: rolled back, smaller steps next time
+      let any=false;
+      for(let k=1;k<=3;k++){                           // auto-adjust the output biases, one intent at a time
+        if(await confirmed())break;
+        const m=JSON.parse(JSON.stringify(best.model));m.biases[2][k]+=sign[k]*delta;await load(m);
+        if(await test(`${sign[k]>0?'more':'less'} ${PROBE_NAMES[k]} (${delta.toFixed(1)})`))any=true;else sign[k]=-sign[k];
+      }
+      if(!any)delta=Math.max(.3,delta*.6);
+    }
+    await report(won()&&await holdout());             // final verdict (cached if the best weights were already confirmed)
+  }catch(x){
+    if(x!==0)throw x;
+    b.train2=false;b.pipeStop=false;                  // cancelled: still report how good the best weights are (cancel again to skip)
+    try{if(best&&target&&(!v2||greedy))await report(false,true);else msg(`${tag} cancelled`,4);}
+    catch(y){if(y!==0)throw y;if(best)await load(best.model);msg(`${tag} cancelled - best weights so far are live and saved`,5);}
+  }finally{b.pipe='';b.pipeStop=false;b.train2=false;benchEnd(keep);}
+}
+// neural inspector floating over the roof of the selected car: inputs + output distribution(s)
+const roofCv=document.createElement('canvas');roofCv.width=460;roofCv.height=376;
+const roofTex=new THREE.CanvasTexture(roofCv);roofTex.colorSpace=THREE.SRGBColorSpace;
+const roofSpr=new THREE.Sprite(new THREE.SpriteMaterial({map:roofTex,transparent:true,depthTest:false}));
+roofSpr.scale.set(8.6,7.03,1);roofSpr.renderOrder=20;roofSpr.visible=false;scene.add(roofSpr);
+function drawRoof(){
+  const g=roofCv.getContext('2d'),q=brain.sel,v=sel,two=v2on()&&brain.sel2; if(!q||!v||!v.probs)return;
+  g.clearRect(0,0,460,376);g.fillStyle='rgba(8,12,20,.86)';g.fillRect(0,0,460,two?376:232);g.font='11px monospace';g.textBaseline='middle';
+  const bars=two?NF2:NF;
+  for(let i=0;i<bars;i++){const y=12+i*(two?18.2:17.6),x0=170;
+    g.fillStyle=i>=NF?'#c9b6ff':'#9fb0c3';g.fillText(IN_NAMES[i],6,y);
+    g.fillStyle='#1c2634';g.fillRect(x0-40,y-5,80,10);
+    const val=clamp(q[i],-1,1);g.fillStyle=val<0?'#ffb347':'#7fd4ff';g.fillRect(val<0?x0+val*40:x0,y-5,Math.abs(val)*40,10);
+    g.fillStyle='#55657a';g.fillRect(x0,y-7,1,14);}
+  if(!two){                                           // v1: intent distribution + what the procedural teacher is doing
+    let am=0;for(let j=1;j<4;j++)if(v.probs[j]>v.probs[am])am=j;
+    for(let j=0;j<4;j++){const y=24+j*46,pj=v.probs[j];
+      g.fillStyle=j===am?'#7be08a':'#9fb0c3';g.fillText(INT_S[j]+' '+(pj*100).toFixed(0)+'%',228,y);
+      g.fillStyle='#1c2634';g.fillRect(228,y+9,200,13);g.fillStyle=j===am?'#7be08a':'#4d7ea8';g.fillRect(228,y+9,200*pj,13);}
+    g.fillStyle='#ffd24a';g.fillText('teacher (IDM/MOBIL): '+INT_S[q[OX+8]|0],228,214);
+  }else{                                              // v2: every head, the option in force highlighted, and the value estimate
+    const z=brain.sel2,act=[v.act,TI[v.turn],v.lanePref+1,Math.round((1.2-v.asF)/.2)];let y=10;
+    HEAD_UI.forEach(([name,off,labels],h)=>{
+      g.fillStyle='#c9b6ff';g.fillText(name.toUpperCase(),228,y);y+=16;
+      labels.forEach((lb,j)=>{const pj=z[off+j],on=j===act[h];
+        g.fillStyle=on?'#7be08a':'#9fb0c3';g.fillText(lb,228,y);g.fillText((pj*100).toFixed(0)+'%',424,y);
+        g.fillStyle='#1c2634';g.fillRect(332,y-5,86,10);g.fillStyle=on?'#7be08a':'#4d7ea8';g.fillRect(332,y-5,86*pj,10);y+=16;});
+      y+=6;});
+    g.fillStyle='#ffd24a';g.fillText('value estimate: '+z[13].toFixed(2),228,y+4);
+  }
+  roofTex.needsUpdate=true;
+}
+
+/* ============================== SIMULATION LOOP ============================== */
+function reroll(){for(const v of vehs){v.ag=clamp(P.aggrMean+gauss()*P.aggrSpread,.1,1);v.v0f=.82+.42*v.ag+rr(-.05,.05);v.T=1.9-1.15*v.ag;v.amax=1.3+1.6*v.ag;v.b=2+1.6*v.ag;v.s0=2.2-.7*v.ag;}}
+function reset(){
+  select(null); camMode='god'; orbit.enabled=true; player.car.active=player.ped.active=false;
+  while(vehs.length)removeVeh(vehs[vehs.length-1]); while(peds.length)removePed(peds[peds.length-1]);
+  hashClear(); buildWorld(); lastBulb=-1;
+  for(const n of world.real)if(n.type==='sig'){const t=n.t;sigStart(n);n.t=t%n.G;sigUpdate(n,0);}
+  seedTraffic(); for(let i=0;i<Math.min(P.maxPeds*.5,P.pedRate*1.2);i++)spawnPed();
+  for(const k in stats)stats[k]=0; simT=0;
+  const sz=Math.max(world.N,world.M)*SP; orbit.target.set(0,0,0); camera.position.set(sz*.25,sz*.55+60,sz*.75+60); updHelp(); updHud(fps);
+}
+let frame=0;
+function step(dt){
+  simT+=dt; W=WX[P.weather];
+  hashClear(); for(const v of vehs)hashAdd(v); for(const p of peds)hashAdd(p); for(const o of world.parked)hashAdd(o);
+  if(player.car.active)hashAdd(player.car); if(player.ped.active)hashAdd(player.ped);
+  updateNodes(dt); spawnTraffic(dt); spawnPeds(dt);
+  for(let i=vehs.length-1;i>=0;i--){const v=vehs[i];if(!v)continue;
+    // temporal LOD: cars beyond two blocks run the full driver model at 15 Hz and are moved by linear kinematics in between
+    if(P.lod&&!v.near&&v!==sel){if((frame+v.id)&3){v.x+=v.vx*dt;v.z+=v.vz*dt;}else updVeh(v,dt*4);}else updVeh(v,dt);}
+  for(let i=peds.length-1;i>=0;i--){const p=peds[i];if(p)updPed(p,dt);}
+  if(player.car.active)updPlayerCar(dt); if(player.ped.active)updPlayerPed(dt);
+  if(++frame%3===0){
+    const f=focusPt(); for(const v of vehs)v.near=hyp(v.x-f.x,v.z-f.z)<2*SP;        // spatial LOD: two blocks around the camera focus / player
+    if(!brainTick()||P.headless)collide(); else playerCollide();                    // collisions run in the worker unless it is unavailable or lagging
+  }
+}
+let last=performance.now(),acc=0,fpsN=0,fpsT=0,fps=60;
+function loop(now){
+  requestAnimationFrame(loop);
+  const dt=Math.min((now-last)/1000,.1); last=now;
+  if(!P.pause){
+    if(P.headless){const t0=performance.now();let n=0;while(performance.now()-t0<15){step(1/60);n++;}brain.tps=Math.round(n/Math.max(dt,.004));}   // fast-forward: physics only
+    else{acc+=dt*P.timeScale;let n=0;while(acc>=1/60&&n<8){step(1/60);acc-=1/60;n++;}if(n===8)acc=0;}
+  }
+  if(msgT>0){msgT-=dt;if(msgT<=0)$('msg').style.display='none';}
+  if(!P.headless){updEnv(dt); updCamera(dt); drawAgents(); drawSignals(); drawDebug(); updParticles(dt);
+    renderer.render(scene,camera);}
+  fpsN++;fpsT+=dt;if(fpsT>=.25){fps=Math.round(fpsN/fpsT);fpsN=0;fpsT=0;updHud(fps);}
+}
+/* ============================== CONTROL PANEL ============================== */
+const gui=new GUI({title:'Simulation Controls',width:310});
+const fw=gui.addFolder('World (rebuilds)');
+fw.add(P,'gridX',2,10,1).name('Grid X (blocks)').onFinishChange(reset);
+fw.add(P,'gridY',2,10,1).name('Grid Y (blocks)').onFinishChange(reset);
+fw.add(P,'lanesNS',1,3,1).name('Lanes / dir: avenues N-S').onFinishChange(reset);
+fw.add(P,'lanesEW',1,3,1).name('Lanes / dir: streets E-W').onFinishChange(reset);
+fw.add(P,'control',['Mixed','All signals','All-way stops','Two-way stops']).name('Junction control').onChange(reset);
+fw.add(P,'sigMode',['8-phase dual ring','4-phase (lead lefts)']).name('Signal controller');
+fw.add(P,'parkFrac',0,1,.05).name('Parking-bay blocks').onFinishChange(reset);
+const ft=gui.addFolder('Traffic');
+ft.add(P,'carRate',0,40,1).name('Car spawn rate (/min/entry)');
+ft.add(P,'maxCars',0,1200,10).name('Max vehicles');
+ft.add(P,'pedRate',0,200,5).name('Pedestrian spawn (/min)');
+ft.add(P,'maxPeds',0,400,10).name('Max pedestrians');
+ft.add(P,'speedLimit',30,80,5).name('Speed limit (km/h)');
+const fp=gui.addFolder('Double parking');
+const dpAct={
+  here(){const f=focusPt();let best=null,bd=1e9;for(const sg of world.segs){if(!sg.from.real||!sg.to.real)continue;const d=hyp(sg.ox+sg.dx*sg.len/2-f.x,sg.oz+sg.dz*sg.len/2-f.z);if(d<bd){bd=d;best=sg;}}
+    const s=clamp((f.x-best.ox)*best.dx+(f.z-best.oz)*best.dz,30,best.len-POCK-8);msg(spawnDP(best,s)?'Double-parked vehicle placed':'No room there right now',1.5);},
+  tracked(){if(sel&&sel.kind==='veh'&&!sel.isPlayer){sel.dpReq=rr(Math.min(P.dpMin,P.dpMax),Math.max(P.dpMin,P.dpMax));msg('Vehicle #'+sel.id+' will double-park',1.5);}else msg('Track a vehicle first',1.5);},
+  clear(){for(const v of vehs){if(v.dp>0&&!v.arrived)v.dp=.01;v.dpReq=0;}}};
+fp.add(P,'doubleParked',0,20,1).name('Auto-spawned count');
+fp.add(P,'dpEvery',1,30,1).name('Spawn interval (s)');
+fp.add(P,'dpMin',5,300,5).name('Min duration (s)');
+fp.add(P,'dpMax',5,300,5).name('Max duration (s)');
+fp.add(P,'dpLane',['Kerb lane','Centre lane','Any lane']).name('Blocked lane');
+fp.add(P,'dpType',['Van','Car','SUV','Truck','Random']).name('Vehicle type');
+fp.add(dpAct,'here').name('Place one at view centre');
+fp.add(dpAct,'tracked').name('Make tracked car double-park');
+fp.add(dpAct,'clear').name('Send all away');
+const fd=gui.addFolder('Human factors');
+fd.add(P,'distMult',0,3,.1).name('Distraction multiplier');
+fd.add(P,'aggrMean',.1,1,.05).name('Aggressiveness mean').onFinishChange(reroll);
+fd.add(P,'aggrSpread',0,.5,.05).name('Aggressiveness spread').onFinishChange(reroll);
+fd.add(P,'jaywalk',0,1,.05).name('Jaywalking propensity');
+const fe=gui.addFolder('Environment');
+fe.add(P,'weather',['Clear','Rain','Snow']).name('Weather');
+fe.add(P,'tod',0,24,.1).name('Time of day (h)').listen();
+fe.add(P,'cycleDay').name('Day/night cycle');
+fe.add(P,'dayLen',30,600,10).name('Day length (s)');
+const fo=gui.addFolder('Debug overlays');
+fo.add(P,'fov').name('FOV cones / mirrors / blind spots');
+fo.add(P,'rays').name('Raycast vectors');
+fo.add(P,'paths').name('Path nodes');
+fo.add(P,'hitboxes').name('Collision hitboxes');
+fo.add(P,'sigBars').name('Signal state on stop lines');
+const fc=gui.addFolder('Camera / agent');
+const act={god:()=>setMode('god'),veh:()=>cycleSel('veh'),ped:()=>cycleSel('ped'),drive:()=>setMode('drive'),walk:()=>setMode('walk'),fp:()=>{player.fp=!player.fp;},reset};
+fc.add(act,'god').name('God view (G)');
+fc.add(act,'veh').name('Track next vehicle');
+fc.add(act,'ped').name('Track next pedestrian');
+fc.add(act,'drive').name('DRIVE a car (WASD)');
+fc.add(act,'walk').name('WALK as pedestrian (WASD)');
+fc.add(act,'fp').name('Toggle 1st / 3rd person (V)');
+const fs=gui.addFolder('Simulation');
+fs.add(P,'pause').name('Pause (P)').listen();
+fs.add(P,'timeScale',.25,4,.25).name('Time scale');
+fs.add(P,'audio').name('Horn audio');
+fs.add(act,'reset').name('Reset simulation');
+const fn=gui.addFolder('Neural brain');
+const nnAct={
+  auto(){if(!brain.ready)return msg('Neural worker is not running: '+brain.err,4);brain.worker.postMessage({type:'clear'});brain.memN=0;P.aiMode=MODES[2];brain.auto=true;P.headless=true;msg('Headless data collection, then 200 training epochs',4);},
+  train:brainTrain,
+  clear(){if(brain.ready){brain.worker.postMessage({type:'clear'});brain.memN=0;}},
+  exp:exportModelJSON,
+  revert(){if(brain.ready){brain.worker.postMessage({type:'rlRevert'});brain.rlHist.length=0;drawGraph();}},
+  bench:benchmark,
+  one(){trainLoop(false);},
+  pure(){trainLoop(true);},
+  forget(){try{localStorage.removeItem('trafficBrain');}catch(x){}fetch('brain-pretrained.json').then(r=>r.json()).then(m=>brain.worker.postMessage({type:'setModel',model:m})).catch(()=>msg('Shipped weights not found',3));},
+  imp(){const i=document.createElement('input');i.type='file';i.accept='.json,application/json';i.onchange=()=>i.files[0]&&importModelJSON(i.files[0]);i.click();}};
+fn.add(nnAct,'one').name('ONE-CLICK TRAIN: clone IDM + RL until it wins');
+fn.add(nnAct,'pure').name('PURE RL: v2 strategic net from scratch (PPO)');
+fn.add(P,'target',100,300,1).name('Stop at (% of IDM score)');
+fn.add(P,'aiMode',MODES).name('Mode').onChange(m=>{
+  brain.pipeHist=[];
+  if(brain.ready)brain.worker.postMessage({type:'rlReset'}); brain.gone.length=0; for(const v of vehs){v.act=-1;v.rw=0;} drawGraph();
+  brain.train2=false;for(const v of vehs){v.needTurn=0;v.lanePref=0;v.asF=1;}
+  if(m===MODES[5]&&!brain.model2)msg('No strategic (v2) network yet: press PURE RL to train one, or import one',5);
+  else if((m===MODES[1]||m===MODES[3])&&!(brain.model&&brain.model.trained))msg('The network is untrained: run "Collect + train" or import a model first',5);
+  else if(m===MODES[3])msg('RL fine-tuning from the current weights: intents are sampled and held ~1 s',4);});
+fn.add(P,'headless').name('Fast-forward headless');
+fn.add(P,'lod').name('Distance LOD (far cars cheap)');
+fn.add(nnAct,'auto').name('Collect + train (headless)');
+fn.add(nnAct,'train').name('Train now (200 epochs)');
+fn.add(nnAct,'clear').name('Clear recorded samples');
+fn.add(nnAct,'exp').name('Export model JSON');
+fn.add(nnAct,'imp').name('Import model JSON');
+fn.add(nnAct,'revert').name('Revert RL (back to cloned weights)');
+fn.add(nnAct,'bench').name('Benchmark: procedural vs AI');
+fn.add(nnAct,'forget').name('Forget saved network (load shipped clone)');
+fd.close();fo.close();fs.close();fp.close();
+gui.controllersRecursive().forEach(c=>c.listen());
+
+brainStart(); drawGraph();
+reset();
+// test / scripting hook
+window.SIM={P,vehs,peds,stats,evlog,camera,orbit,setDest,spawnDP,brain,brainTrain,benchmark,trainLoop,benchRun,benchBegin,benchEnd,RW,MODES,features,features2,labelOf,exportModelJSON,importModelJSON,player,step,reset,setMode,select,cycleSel,keys,get world(){return world;},get sel(){return sel;},get mode(){return camMode;},get t(){return simT;},
+  run(sec,dt=1/60){const n=Math.round(sec/dt);for(let i=0;i<n;i++)step(dt);return{t:simT,vehs:vehs.length,peds:peds.length,...stats};},
+  // self-check: headless fast-forward + invariants (finite state, no stuck agents). e.g. SIM.check(300)
+  diag(){let nan=0,junc=0,stopped=0,sp=0,maxStuck=0;const why={},ps={};
+    for(const v of vehs){if(![v.x,v.z,v.v,v.s,v.laneF,v.fx,v.fz].every(isFinite))nan++;if(v.mode==='junc')junc++;sp+=v.v;if(v.stuckT>maxStuck)maxStuck=v.stuckT;
+      if(v.v<.3){stopped++;const k=(v.seg.to.real?v.seg.to.type:'exit')+':'+v.state;why[k]=(why[k]||0)+1;}}
+    for(const p of peds){if(!isFinite(p.x)||!isFinite(p.z))nan++;ps[p.state]=(ps[p.state]||0)+1;}
+    return{t:Math.round(simT),vehs:vehs.length,peds:peds.length,nan,junc,stopped,kmh:+(sp/Math.max(1,vehs.length)*3.6).toFixed(1),maxStuck:Math.round(maxStuck),why,ps,stats:{...stats},err:window.SIM_ERRORS||null};},
+  check(sec=300){const p=P.pause;P.pause=true;const t0=performance.now();this.run(sec);const d=this.diag();P.pause=p;d.msPerStep=+((performance.now()-t0)/(sec*60)).toFixed(3);
+    console.assert(d.nan===0&&!d.err,'simulation state corrupted',d);return d;}};
+requestAnimationFrame(loop);
+
+</script>
+</body>
+</html>
