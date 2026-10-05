@@ -1,0 +1,135 @@
+/* Disable user selection to avoid strange bug in Chrome on Windows:
+	* Selecting a text outside the canvas, then clicking+draging would
+	* drag the selected text but block mouse down/up events to the engine.
+	*/
+	body {
+
+		position: fixed;
+		/* Prevent overscroll */
+	
+		margin: 0;
+		padding: 0;
+	}
+	
+	.canvas-app-container {
+		width: 100%;
+		height: 100%;
+		position: absolute;
+		align-items: center;
+		justify-content: center;
+		overflow: hidden;
+	}
+	
+	.canvas-app-container:-webkit-full-screen {
+		/* Auto width and height in Safari/Chrome fullscreen. */
+		width: auto;
+		height: auto;
+	}
+	
+	#canvas {
+		outline: none;
+		border: 0;
+		width: 100%;
+		vertical-align: bottom;
+	}
+	
+	#canvas-container {
+		position: relative;
+	}
+	
+	canvas:focus,
+	canvas:active {
+		outline: none;
+		border: 0;
+		-moz-outline-style: none;
+	}
+	
+	div {
+		-webkit-tap-highlight-color: rgba(0, 0, 0, 0);
+		-webkit-touch-callout: none;
+		-webkit-user-select: none;
+		-khtml-user-select: none;
+		-moz-user-select: none;
+		-ms-user-select: none;
+		user-select: none;
+	}
+	
+	.banner-styleBottom {
+		margin: 0 auto;
+		position: fixed;
+		bottom: 0;
+		display: block;
+		left: 50%;
+		transform: translateX(-50%);
+	}
+	
+	.banner-styleTop {
+		margin: 0 auto;
+		position: fixed;
+		top: 0;
+		display: block;
+		left: 50%;
+		transform: translateX(-50%);
+	}
+	
+	.canvas-app-progress {
+		position: absolute;
+		background-color: #0A8A40;
+		height: 30px;
+		margin-top: -30px;
+		width: 100%;
+	}
+	
+	.canvas-app-progress-bar {
+		font-size: 12px;
+		height: 30px;
+		color: rgb(255, 255, 255);
+		background-color: #FFE333;
+		text-align: center;
+		line-height: 20px;
+	}
+	
+	
+	.link,
+	.button {
+		font-family: sans-serif;
+		font-size: 14px;
+		font-weight: normal;
+		font-style: normal;
+		font-stretch: normal;
+		line-height: normal;
+		letter-spacing: 0px;
+		padding-top: 12px;
+	}
+	
+	.buttons-background {
+		background-color: #ffffff;
+		width: 100%;
+		height: 42px;
+	}
+	
+	body {
+		background-color: #ffffff;
+	}
+	
+	.canvas-app-container {
+		background: #00BB61;
+		/* background: -moz-linear-gradient(-45deg, rgba(250,252,255,1) 0%, rgba(250,252,255,1) 50%, rgba(245,249,255,1) 50%, rgba(245,249,255,1) 100%);
+			background: -webkit-gradient(left top, right bottom, color-stop(0%, rgba(250,252,255,1)), color-stop(50%, rgba(250,252,255,1)), color-stop(50%, rgba(245,249,255,1)), color-stop(100%, rgba(245,249,255,1)));
+			background: -webkit-linear-gradient(-45deg, rgba(250,252,255,1) 0%, rgba(250,252,255,1) 50%, rgba(245,249,255,1) 50%, rgba(245,249,255,1) 100%);
+			background: -o-linear-gradient(-45deg, rgba(250,252,255,1) 0%, rgba(250,252,255,1) 50%, rgba(245,249,255,1) 50%, rgba(245,249,255,1) 100%);
+			background: -ms-linear-gradient(-45deg, rgba(250,252,255,1) 0%, rgba(250,252,255,1) 50%, rgba(245,249,255,1) 50%, rgba(245,249,255,1) 100%);
+			background: linear-gradient(135deg, rgba(250,252,255,1) 0%, rgba(250,252,255,1) 50%, rgba(245,249,255,1) 50%, rgba(245,249,255,1) 100%);
+			filter: progid:DXImageTransform.Microsoft.gradient( startColorstr='#fafcff', endColorstr='#f5f9ff', GradientType=1 ); */
+	}
+	
+	.canvas-app-canvas {
+		background-repeat: no-repeat;
+		background-position: center;
+	
+		background-position: top;
+		background-size: cover;
+		background-image: url("bg_loading.png");
+	
+	
+	}
