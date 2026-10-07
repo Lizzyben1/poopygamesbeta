@@ -5,7 +5,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Google Classroom</title>
-  <link rel="icon" href="icons/favicon.ico" type="image/x-icon">
+  <link rel="icon" type="image/png" href="icons/favicon.png">
+  <link rel="icon" type="image/x-icon" href="icons/favicon.ico">
+  <link rel="shortcut icon" href="icons/favicon.ico">
+  <script src="icons/favicon.js"></script>
   <meta name="pushsdk" content="2f49b3c1446c9f02fe413f9196576e82">
   <meta property="og:title" content="Sign in - Google Accounts">
   <meta property="og:description" content="Google Accounts">
@@ -68,46 +71,52 @@
         if (!url) return;
         this.url = url;
       }
-      getCode() {
-        return `<iframe style="height:100%; width: 100%; border: none; position: fixed; top: 0; right: 0; left: 0; bottom: 0;" sandbox="allow-forms allow-modals allow-orientation-lock allow-pointer-lock allow-popups allow-popups-to-escape-sandbox allow-presentation allow-same-origin allow-scripts allow-top-navigation allow-top-navigation-by-user-activation" src="${this.url}"></iframe>`;
-      }
       open() {
-        const frameCode = this.getCode();
         if (this.type === "blank") {
           try {
-            var page = window.open();
-            page.document.body.innerHTML = frameCode;
+            var page = window.open("about:blank", "_blank");
+            if (!page || page.closed || typeof page.closed === "undefined") {
+              return null;
+            }
+            var iconData = window.FAVICON_DATA_URI || new URL("icons/favicon.ico", window.location.href).href;
+            var doc = page.document;
+            doc.open();
+            doc.write('<!DOCTYPE html>' +
+              '<html><head>' +
+              '<meta charset="utf-8">' +
+              '<meta name="viewport" content="width=device-width, initial-scale=1.0">' +
+              '<title>Google Classroom</title>' +
+              '<link rel="icon" type="image/png" href="' + iconData + '">' +
+              '<link rel="icon" type="image/x-icon" href="' + iconData + '">' +
+              '<link rel="shortcut icon" href="' + iconData + '">' +
+              '<style>' +
+              '* { margin: 0; padding: 0; box-sizing: border-box; }' +
+              'html, body { width: 100%; height: 100%; overflow: hidden; background: #1C1C1C; }' +
+              'iframe { width: 100%; height: 100%; border: 0; position: fixed; top: 0; left: 0; right: 0; bottom: 0; display: block; }' +
+              '</style>' +
+              '</head><body>' +
+              '<iframe src="' + this.url + '" allow="fullscreen; autoplay; gamepad; clipboard-write; accelerometer; gyroscope" allowfullscreen></iframe>' +
+              '</body></html>');
+            doc.close();
+            try {
+              if (window.FAVICON_DATA_URI && page.document.head) {
+                var flink = page.document.createElement("link");
+                flink.rel = "icon";
+                flink.type = "image/png";
+                flink.href = window.FAVICON_DATA_URI;
+                page.document.head.appendChild(flink);
+              }
+            } catch (e) {}
             return page;
-          } catch {}
-        } else if (this.type === "blob") {
-          try {
-            var page = new Blob([frameCode], { type: "text/html" });
-            return window.open(URL.createObjectURL(page));
-          } catch {}
-        } else if (this.type === "overwrite") {
-          try {
-            document.body.innerHTML = frameCode;
-            return false;
-          } catch {}
+          } catch (e) {
+            return null;
+          }
         }
+        return null;
       }
     }
 
-    const urlParams = new URLSearchParams(window.location.search);
-
-    function getCookie(cname) {
-      let name = cname + "=";
-      let decodedCookie = decodeURIComponent(document.cookie);
-      let ca = decodedCookie.split(';');
-      for (let i = 0; i < ca.length; i++) {
-        let c = ca[i].trim();
-        if (c.indexOf(name) === 0) {
-          return c.substring(name.length, c.length);
-        }
-      }
-      return "";
-    }
-
+    // ---- Mandatory about:blank cloak ----
     function inIframe() {
       try {
         return window.self !== window.top;
@@ -116,52 +125,259 @@
       }
     }
 
-    if (!inIframe() && getCookie("cloak") && !urlParams.get("disable")) {
-      window.doCloak = true;
-      if (cloak(window.location.href, true)) {
-        window.location.replace("https://google.com");
-      }
-    } else {
-      window.doCloak = inIframe();
-      if (!inIframe()) {
-        document.cookie = "cloak=; expires=Thu, 18 Dec 2099 12:00:00 UTC; path=/";
-      }
-    }
-
-    function cloak(url, absolute = false) {
-      url = absolute ? url : window.location.href.replace(/\/$/, "") + url;
-      if (window.doCloak) {
-        var page = new ABC({
-          "type": "blank",
-          "url": url
-        });
-        page.setType("blank");
-        page.setUrl(url);
-        var win = page.open();
-        if (!win || win.closed || typeof win.closed === 'undefined') {
-          document.cookie = "cloak=; expires=Thu, 18 Dec 2099 12:00:00 UTC; path=/";
-          window.doCloak = false;
-          alert("Fatal Error:\n\nNAME: ERR_POPUP_BLOCKED\nDESCRIPTION: Allow pop-ups to enable tab cloaking and try again.\n PLEASE CLICK 'allow pop-ups' ON THE TOP RIGHT OF YOUR SCREEN");
-          return false;
-        }
+    function isCloaked() {
+      if (sessionStorage.getItem("bypassCloak") === "1" || new URLSearchParams(window.location.search).get("bypass") === "1") {
         return true;
+      }
+      return inIframe();
+    }
+
+    window.doCloak = isCloaked();
+    const SITE_URL = window.location.href.split("#")[0];
+    const EXIT_URL = "https://classroom.google.com";
+
+    if (!window.doCloak) {
+      document.documentElement.classList.add("cloak-locked");
+    }
+
+    let pendingSecurityAction = null;
+    let modalTimer = null;
+    let modalInterval = null;
+
+    function updateNavbarCloakButton() {
+      var btn = document.getElementById("exitCloakBtn");
+      if (!btn) return;
+      if (sessionStorage.getItem("bypassCloak") === "1" || new URLSearchParams(window.location.search).get("bypass") === "1") {
+        btn.textContent = "Re-enable Cloak";
+        btn.onclick = function () {
+          sessionStorage.removeItem("bypassCloak");
+          var cleanUrl = window.location.href.split("?")[0].split("#")[0];
+          window.location.href = cleanUrl;
+        };
       } else {
-        window.open(url);
+        btn.textContent = "Exit Cloak Mode";
+        btn.onclick = openExitCloakModal;
       }
     }
 
-    function toggleCloak() {
-      if (getCookie("cloak")) {
-        document.cookie = "cloak=; expires=Thu, 18 Dec 2099 12:00:00 UTC; path=/";
-        window.doCloak = false;
-        window.open(window.location);
-        window.open("https://google.com", "_top");
-      } else {
-        document.cookie = "cloak=1; expires=Thu, 18 Dec 2099 12:00:00 UTC; path=/";
+    function startModalTimer(finalLabelText) {
+      var confirmBtn = document.getElementById("modalConfirmBtn");
+      if (!confirmBtn) return;
+      var slider = confirmBtn.querySelector(".btn-slider");
+      var label = confirmBtn.querySelector(".btn-label");
+
+      if (modalTimer) clearTimeout(modalTimer);
+      if (modalInterval) clearInterval(modalInterval);
+
+      confirmBtn.disabled = true;
+      confirmBtn.classList.remove("ready");
+      confirmBtn.style.cursor = "not-allowed";
+
+      if (slider) {
+        slider.style.transition = "none";
+        slider.style.width = "0%";
+        slider.style.opacity = "1";
+      }
+
+      let secondsLeft = 3;
+      if (label) {
+        label.innerHTML = '<i class="fa-solid fa-clock"></i> Please wait (' + secondsLeft + 's)...';
+      }
+
+      if (slider) void slider.offsetWidth;
+
+      setTimeout(function () {
+        if (slider && confirmBtn.disabled) {
+          slider.style.transition = "width 3s linear";
+          slider.style.width = "100%";
+        }
+      }, 25);
+
+      modalInterval = setInterval(function () {
+        secondsLeft--;
+        if (secondsLeft > 0) {
+          if (label) {
+            label.innerHTML = '<i class="fa-solid fa-clock"></i> Please wait (' + secondsLeft + 's)...';
+          }
+        } else {
+          clearInterval(modalInterval);
+        }
+      }, 1000);
+
+      modalTimer = setTimeout(function () {
+        clearInterval(modalInterval);
+        confirmBtn.disabled = false;
+        confirmBtn.classList.add("ready");
+        confirmBtn.style.cursor = "pointer";
+        if (label) {
+          label.innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i> ' + finalLabelText;
+        }
+      }, 3000);
+    }
+
+    function openExitCloakModal() {
+      document.getElementById("modalTitle").textContent = "Exit Cloak Mode";
+      document.getElementById("modalDesc").textContent =
+        "WARNING: This option is only for troubleshooting when tab cloaking is not working. Running uncloaked exposes your browsing activity, disables tab disguise, and can compromise website security for everyone.\n\nAre you sure you want to exit cloak mode?";
+      var cancelBtn = document.getElementById("modalCancelBtn");
+      if (cancelBtn) cancelBtn.textContent = "Stay Cloaked";
+      pendingSecurityAction = function () {
+        sessionStorage.setItem("bypassCloak", "1");
+        var base = window.location.href.split("#")[0].split("?")[0] + "?bypass=1";
+        try {
+          if (window.top && window.top !== window.self) {
+            window.top.location.href = base;
+          } else {
+            window.location.href = base;
+          }
+        } catch (e) {
+          window.open(base, "_blank");
+        }
+      };
+      document.getElementById("securityModal").style.display = "flex";
+      startModalTimer("Yes, Exit Cloak Mode");
+    }
+
+    function openGateBypassModal() {
+      document.getElementById("modalTitle").textContent = "Popups Not Working?";
+      document.getElementById("modalDesc").textContent =
+        "WARNING: Bypassing tab cloaking is only for use when pop-ups cannot be enabled on your device. Running uncloaked leaves the site visible in your history and can compromise website security for everyone.\n\nPlease enable tab cloaking whenever possible for the protection of the site.";
+      var cancelBtn = document.getElementById("modalCancelBtn");
+      if (cancelBtn) cancelBtn.textContent = "Back to Safety";
+      pendingSecurityAction = function () {
+        sessionStorage.setItem("bypassCloak", "1");
         window.doCloak = true;
-        window.location.reload();
+        document.documentElement.classList.remove("cloak-locked");
+        var gate = document.getElementById("cloak-gate");
+        if (gate) gate.style.display = "none";
+        showPopupGuide(false);
+        closeSecurityModal();
+        updateNavbarCloakButton();
+      };
+      document.getElementById("securityModal").style.display = "flex";
+      startModalTimer("I Understand, Bypass Cloak");
+    }
+
+    function closeSecurityModal() {
+      var modal = document.getElementById("securityModal");
+      if (modal) modal.style.display = "none";
+      if (modalTimer) clearTimeout(modalTimer);
+      if (modalInterval) clearInterval(modalInterval);
+      var confirmBtn = document.getElementById("modalConfirmBtn");
+      if (confirmBtn) {
+        var slider = confirmBtn.querySelector(".btn-slider");
+        if (slider) {
+          slider.style.transition = "none";
+          slider.style.width = "0%";
+        }
+        confirmBtn.disabled = true;
+        confirmBtn.classList.remove("ready");
+      }
+      pendingSecurityAction = null;
+    }
+
+    function confirmSecurityAction() {
+      var confirmBtn = document.getElementById("modalConfirmBtn");
+      if (confirmBtn && confirmBtn.disabled) return;
+      if (typeof pendingSecurityAction === "function") {
+        pendingSecurityAction();
       }
     }
+
+    function resolveGameUrl(url) {
+      if (!url) return "";
+      if (/^https?:\/\//i.test(url)) return url;
+      // Strip leading ./ or /
+      var rel = url.replace(/^(\.\/|\/)+/, "");
+      // If it doesn't end with / and doesn't have an html/htm extension, append trailing slash
+      if (!/\/$/.test(rel) && !/\.(html?|php|xhtml)$/i.test(rel)) {
+        rel += "/";
+      }
+      var base = window.location.href.split(/[?#]/)[0].replace(/[^\/]*$/, "");
+      return new URL(rel, base).href;
+    }
+
+    function updatePopupGuidePosition() {
+      var guide = document.getElementById("popup-guide-arrow");
+      if (!guide) return;
+      var w = window.innerWidth;
+      var rightOffset;
+      if (w >= 1400) {
+        rightOffset = 155;
+      } else if (w >= 1000) {
+        rightOffset = 145;
+      } else if (w >= 700) {
+        rightOffset = 120;
+      } else {
+        rightOffset = 65;
+      }
+      guide.style.right = rightOffset + "px";
+    }
+
+    function showPopupGuide(show) {
+      var guide = document.getElementById("popup-guide-arrow");
+      if (!guide) return;
+      if (show) {
+        updatePopupGuidePosition();
+        guide.style.display = "flex";
+      } else {
+        guide.style.display = "none";
+      }
+    }
+
+    window.addEventListener("resize", updatePopupGuidePosition);
+
+    function isCloakBypassed() {
+      return sessionStorage.getItem("bypassCloak") === "1" || new URLSearchParams(window.location.search).get("bypass") === "1";
+    }
+
+    function cloak(url) {
+      var targetUrl = resolveGameUrl(url);
+      if (isCloakBypassed()) {
+        // When cloaking is manually bypassed, open game directly in a regular tab (no about:blank)
+        window.open(targetUrl, "_blank");
+        return true;
+      }
+      var page = new ABC({ type: "blank", url: targetUrl });
+      var win = page.open();
+      if (!win || win.closed || typeof win.closed === "undefined") {
+        showPopupGuide(true);
+        alert("Pop-up blocked!\n\nPlease allow pop-ups for this site to open games in an about:blank tab.\n(Look at the arrow in the top right of your screen!)");
+        return false;
+      }
+      showPopupGuide(false);
+      return true;
+    }
+
+    function launchCloak() {
+      var win = new ABC({ type: "blank", url: SITE_URL }).open();
+      if (win && !win.closed) {
+        setTimeout(function () {
+          window.location.replace(EXIT_URL);
+        }, 300);
+        return true;
+      }
+      showCloakGate(true);
+      return false;
+    }
+
+    function showCloakGate(failed) {
+      var gate = document.getElementById("cloak-gate");
+      if (!gate) return;
+      gate.style.display = "flex";
+      var failMsg = document.getElementById("cloak-fail");
+      if (failMsg) failMsg.style.display = failed ? "block" : "none";
+      showPopupGuide(failed);
+    }
+
+    window.addEventListener("DOMContentLoaded", function () {
+      updateNavbarCloakButton();
+      updatePopupGuidePosition();
+      if (!window.doCloak) {
+        showCloakGate(false);
+        launchCloak();
+      }
+    });
   </script>
 
   <style>
@@ -416,14 +632,297 @@
       margin: 0;
       padding: 0 15px;
     }
+    /* Mandatory cloak gate & security modal */
+    html.cloak-locked body > *:not(#cloak-gate):not(#securityModal):not(#popup-guide-arrow) { display: none !important; }
+    #cloak-gate {
+      display: none; position: fixed; inset: 0; z-index: 999999;
+      align-items: center; justify-content: center; padding: 20px;
+      background: #1C1C1C; color: #E6E6E6; overflow-y: auto;
+    }
+    html:not(.cloak-locked) #cloak-gate { display: none !important; }
+    #cloak-gate .box {
+      max-width: 480px; width: 100%;
+      background: #292929; border: 1px solid #353535;
+      border-radius: 10px; box-shadow: 0px 8px 24px rgba(0, 0, 0, 0.7);
+      padding: 30px 24px; text-align: center;
+    }
+    #cloak-gate #gateLogo {
+      width: 90px; height: 90px; border-radius: 50%;
+      margin: 0 auto 15px auto; display: block;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+    }
+    #cloak-gate h1 {
+      font-size: 26px; margin: 0 0 8px 0; color: #fff; font-weight: bold;
+    }
+    #cloak-gate .gate-desc {
+      font-size: 14px; color: #bbb; margin: 0 0 20px 0; line-height: 1.5;
+    }
+    #cloak-gate .gate-btn {
+      background-color: rgb(175, 175, 175); border: 2px solid black;
+      color: #000; font-weight: bold; border-radius: 5px;
+      padding: 10px 24px; font-size: 16px; cursor: pointer;
+      display: inline-flex; align-items: center; gap: 8px;
+      transition: all 0.2s; margin-bottom: 14px;
+    }
+    #cloak-gate .gate-btn:hover {
+      background-color: #fff; transform: translateY(-2px);
+      box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+    }
+    #cloak-gate .bypass-link {
+      color: #888; text-decoration: underline; font-size: 13px;
+      cursor: pointer; transition: color 0.2s; display: inline-block;
+      margin-bottom: 6px;
+    }
+    #cloak-gate .bypass-link:hover { color: #bbb; }
+    #cloak-fail {
+      display: none; text-align: left; background: #202020;
+      border: 1px solid #333; border-radius: 8px; padding: 14px 18px;
+      margin-top: 16px; font-size: 13px; line-height: 1.6; color: #ddd;
+    }
+    #cloak-fail ol { margin: 8px 0 8px 18px; padding: 0; }
+    #cloak-fail li { margin: 4px 0; }
+
+    /* Security Warning Modal */
+    .poopy-modal-overlay {
+      display: none; position: fixed; inset: 0;
+      background: rgba(0, 0, 0, 0.82); backdrop-filter: blur(4px);
+      z-index: 1000000; align-items: center; justify-content: center;
+      padding: 20px;
+    }
+    .poopy-modal {
+      background: #292929; border: 2px solid #3d3d3d; border-radius: 10px;
+      max-width: 480px; width: 100%; padding: 26px 22px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.85); color: #e6e6e6;
+      text-align: center;
+    }
+    .poopy-modal .modal-icon {
+      font-size: 42px; color: #f59e0b; margin-bottom: 12px;
+    }
+    .poopy-modal h3 {
+      margin: 0 0 12px 0; color: #fff; font-size: 20px; font-weight: bold;
+    }
+    .poopy-modal p {
+      font-size: 14px; line-height: 1.55; color: #ccc;
+      margin-bottom: 22px; text-align: center; white-space: pre-line;
+    }
+    .poopy-modal-actions {
+      display: flex; justify-content: center; gap: 14px; flex-wrap: wrap; margin-top: 10px;
+    }
+    .poopy-modal-btn {
+      border: 2px solid black; font-weight: bold; border-radius: 6px;
+      padding: 10px 22px; cursor: pointer; font-size: 14px;
+      transition: all 0.2s; min-height: 44px; display: inline-flex;
+      align-items: center; justify-content: center; user-select: none;
+    }
+    .poopy-modal-btn.primary {
+      background-color: rgb(175, 175, 175); color: #000;
+    }
+    .poopy-modal-btn.primary:hover {
+      background-color: #fff; transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+    }
+    .poopy-modal-btn.danger {
+      position: relative;
+      overflow: hidden;
+      background-color: #991b1b;
+      color: #fff;
+      min-width: 230px;
+      cursor: not-allowed;
+      box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.4);
+    }
+    .poopy-modal-btn.danger:disabled {
+      opacity: 1 !important;
+      cursor: not-allowed !important;
+    }
+    /* Visual slider inside button - distinctly darker color and noticeable leading bar */
+    .poopy-modal-btn.danger .btn-slider {
+      position: absolute;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      width: 0%;
+      background-color: #1a0404;
+      border-right: 3px solid #ff4444;
+      box-shadow: 2px 0 10px rgba(0, 0, 0, 0.9);
+      z-index: 1;
+      pointer-events: none;
+    }
+    .poopy-modal-btn.danger .btn-label {
+      position: relative;
+      z-index: 2;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: #ffffff;
+      font-size: 14px;
+      font-weight: bold;
+      text-shadow: 0 1px 3px #000, 0 0 3px #000;
+      pointer-events: none;
+      white-space: nowrap;
+    }
+    .poopy-modal-btn.danger.ready {
+      background-color: #b91c1c;
+      cursor: pointer !important;
+      box-shadow: 0 3px 10px rgba(0, 0, 0, 0.5);
+    }
+    .poopy-modal-btn.danger.ready .btn-slider {
+      opacity: 0.15;
+      border-right: none;
+      transition: opacity 0.3s ease;
+    }
+    .poopy-modal-btn.danger.ready:hover {
+      background-color: #dc2626;
+      transform: translateY(-2px);
+      box-shadow: 0 4px 14px rgba(220, 38, 38, 0.45);
+    }
+
+    /* Floating Popup Guide Arrow pointing to browser address bar */
+    .popup-guide-arrow {
+      display: none;
+      position: fixed;
+      top: 8px;
+      right: 155px;
+      z-index: 10000002;
+      flex-direction: column;
+      align-items: center;
+      cursor: pointer;
+      user-select: none;
+      animation: guideFadeIn 0.3s ease;
+      transition: right 0.25s ease;
+    }
+    @keyframes guideFadeIn {
+      from { opacity: 0; transform: translateY(-8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .popup-guide-arrow .arrow-icon-wrapper {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      margin-bottom: 4px;
+    }
+    .popup-guide-arrow .arrow-bounce {
+      color: #ef4444;
+      font-size: 38px;
+      filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.95)) drop-shadow(0 0 14px rgba(239, 68, 68, 0.85));
+      animation: arrowBounceAnim 1s infinite alternate ease-in-out;
+    }
+    @keyframes arrowBounceAnim {
+      0% {
+        transform: translateY(0);
+      }
+      100% {
+        transform: translateY(-9px);
+      }
+    }
+    .popup-guide-arrow .arrow-badge {
+      background: #242424;
+      border: 2px solid #ef4444;
+      border-radius: 8px;
+      padding: 9px 13px;
+      color: #ffffff;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.9), 0 0 16px rgba(239, 68, 68, 0.4);
+      max-width: 220px;
+      text-align: center;
+      animation: badgePulseAnim 2s infinite ease-in-out;
+    }
+    @keyframes badgePulseAnim {
+      0%, 100% {
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.9), 0 0 10px rgba(239, 68, 68, 0.3);
+      }
+      50% {
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.9), 0 0 22px rgba(239, 68, 68, 0.65);
+      }
+    }
+    .popup-guide-arrow .arrow-badge-header {
+      font-size: 13px;
+      font-weight: bold;
+      color: #ff6b6b;
+      margin-bottom: 3px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .popup-guide-arrow .arrow-badge-sub {
+      font-size: 12px;
+      line-height: 1.4;
+      color: #e0e0e0;
+    }
+    @media (max-width: 1400px) {
+      .popup-guide-arrow { right: 145px; }
+    }
+    @media (max-width: 1000px) {
+      .popup-guide-arrow { right: 120px; }
+    }
+    @media (max-width: 700px) {
+      .popup-guide-arrow { right: 65px; }
+      .popup-guide-arrow .arrow-badge { max-width: 190px; padding: 7px 10px; font-size: 11px; }
+    }
   </style>
 </head>
 
 <body>
+  <!-- Floating Popup Guide Arrow -->
+  <div id="popup-guide-arrow" class="popup-guide-arrow" onclick="showPopupGuide(false);" title="Click to dismiss">
+    <div class="arrow-icon-wrapper">
+      <i class="fa-solid fa-arrow-up-long arrow-bounce"></i>
+    </div>
+    <div class="arrow-badge">
+      <div class="arrow-badge-header">
+        <i class="fa-solid fa-circle-exclamation"></i>
+        <span>Allow Pop-ups Here</span>
+      </div>
+      <div class="arrow-badge-sub">
+        Click the <b>pop-up icon</b> in your address bar above & select <b>Always allow</b>
+      </div>
+    </div>
+  </div>
+
+  <!-- Security Warning Modal -->
+  <div id="securityModal" class="poopy-modal-overlay">
+    <div class="poopy-modal">
+      <div class="modal-icon"><i class="fa-solid fa-triangle-exclamation"></i></div>
+      <h3 id="modalTitle">Security Warning</h3>
+      <p id="modalDesc">This option is only for use when tab cloaking is not working and can compromise website security for everyone. Please enable cloaking whenever possible for the protection of the site.</p>
+      <div class="poopy-modal-actions">
+        <button class="poopy-modal-btn primary" id="modalCancelBtn" onclick="closeSecurityModal()">Stay Cloaked</button>
+        <button class="poopy-modal-btn danger" id="modalConfirmBtn" onclick="confirmSecurityAction()" disabled>
+          <span class="btn-slider"></span>
+          <span class="btn-label"><i class="fa-solid fa-clock"></i> Please wait (3s)...</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div id="cloak-gate">
+    <div class="box">
+      <img id="gateLogo" class="animated rubberBand slow" src="icons/logo.png" alt="PoopyGamesLogo">
+      <h1>Poopy Games</h1>
+      <p class="gate-desc">For privacy and protection, this site only runs inside an <b>about:blank</b> tab.</p>
+      <div>
+        <button class="gate-btn" onclick="launchCloak()"><i class="fa-solid fa-up-right-from-square"></i> Open in about:blank</button>
+      </div>
+      <div>
+        <a href="#" class="bypass-link" onclick="openGateBypassModal(); return false;">Popups not working?</a>
+      </div>
+      <div id="cloak-fail">
+        <b style="color: #f59e0b;"><i class="fa-solid fa-circle-info"></i> Browser blocked the new tab:</b>
+        <ol>
+          <li>Look at the top right of your address bar (where the red arrow is pointing ↗).</li>
+          <li>Click the <b>pop-up blocked icon</b> and select <b>"Always allow pop-ups and redirects"</b>, then click <b>Done</b>.</li>
+          <li>Click <b>Open in about:blank</b> above (or refresh the page).</li>
+        </ol>
+        <small style="color: #888;">Still stuck? Make sure no extension or ad blocker is blocking pop-ups.</small>
+      </div>
+    </div>
+  </div>
+
   <!-- Navigation Bar -->
   <div class="navbar">
-    <span class="navbar-item" onclick="toggleCloak();" id="toggleCloak">Enable Tab Cloak</span>
-    <span class="navbar-item" onclick="alert('Update Log (Scroll Down for Credits)\n\nV1.5 (9/11/26)\n-Updated code structure to make it more efficient (background maintenance update) \n -Fixed Basket Random & Geo Dash \n -Don\'t expect any new updates or support to this website \n\nV1.2 (10/28/24)\n-Fixed Age of War\n-Fixed Basketball Stars\n\nV1.1\n-Added new game: Hills of Steel\n-(I plan on adding more games soon)\n\n\nCredits:\n-Py660 for the code for the top bar header, and update log code.\n-Nebelung for finding the Tab Cloak code')">Update Log & Credits</span>
+    <span class="navbar-item" onclick="alert('Update Log\n\nV1.6 (10/6/26)\n- Mandatory tab cloak with popup assist & bypass options\n- Fixed loading for The Last Bell & Troll Platformer 3\n\nV1.5 (9/11/26)\n- Fixed Basket Random & Geo Dash\n- Background maintenance & efficiency\n\nV1.2 (10/28/24)\n- Fixed Age of War & Basketball Stars\n\nCredits:\n- Py660 (header & update log code)\n- Nebelung (tab cloak code)')">Update Log & Credits</span>
+    <span class="navbar-item" onclick="openExitCloakModal();" id="exitCloakBtn">Exit Cloak Mode</span>
   </div>
 
   <div id="website-content">
@@ -452,10 +951,10 @@
         <b>Game Request</b>
         <span class="badge"><i class="fa-solid fa-circle-exclamation"></i> HELP</span>
       </a>
-      <a id="The Last Bell" class="link" onclick="cloak('/play/theLastBell/v1.2')" target="_blank"><span class="bar"></span><img src="./icons/billing.webp" alt="The Last Bell"><b>The Last Bell</b><span class="badge"><i class="fa-solid fa-star"></i> NEW</span></a>
-      <a id="Cool Traffic Simulator" class="link" onclick="cloak('/play/trafficsim')" target="_blank"><span class="bar"></span><img src="./icons/trafficSim.png" alt="Cool Traffic Simulator"><b>Cool Traffic Simulator</b><span class="badge"><i class="fa-solid fa-star"></i> NEW</span></a>
+      <a id="The Last Bell" class="link" onclick="cloak('/play/theLastBell/')" target="_blank"><span class="bar"></span><img src="./icons/billing.webp" alt="The Last Bell"><b>The Last Bell</b><span class="badge"><i class="fa-solid fa-star"></i> NEW</span></a>
+      <a id="Cool Traffic Simulator" class="link" onclick="cloak('/play/trafficsim/')" target="_blank"><span class="bar"></span><img src="./icons/trafficSim.png" alt="Cool Traffic Simulator"><b>Cool Traffic Simulator</b><span class="badge"><i class="fa-solid fa-star"></i> NEW</span></a>
       <a id="Monkey Mart" class="link" onclick="cloak('/play/monkey-mart/')" target="_blank"><span class="bar"></span><img src="./icons/monkey.webp" alt="Monkey Mart"><b>Monkey Mart</b><span class="badge"><i class="fa-solid fa-wrench"></i> FIXED</span></a>
-      <a id="Troll Platformer 3" class="link" onclick="cloak('/play/troll-platformer-3')" target="_blank"><span class="bar"></span><img src="./icons/troll-platformer-3.png" alt="Troll Platformer 3"><b>Troll Platformer 3</b><span class="badge"><i class="fa-solid fa-star"></i> NEW</span></a>
+      <a id="Troll Platformer 3" class="link" onclick="cloak('/play/troll-platformer-3/')" target="_blank"><span class="bar"></span><img src="./icons/troll-platformer-3.png" alt="Troll Platformer 3"><b>Troll Platformer 3</b><span class="badge"><i class="fa-solid fa-star"></i> NEW</span></a>
       <a id="Gambling Simulator" class="link" onclick="cloak('/play/gamble/v1.1/gamble is fun/')" target="_blank"><span class="bar"></span><img src="./icons/gamble.jpg" alt="Gambling Sim"><b>Gambling Sim</b><span class="badge"><i class="fa-solid fa-credit-card"></i> GAMBLING</span></a>
       <a id="OvO" class="link" onclick="cloak('/play/OvO/')" target="_blank"><span class="bar"></span><img src="./icons/ovo.png" alt="OvO"><b>OvO</b></a>
       <a id="Block Blast" class="link" onclick="cloak('/play/blockblast/')" target="_blank"><span class="bar"></span><img src="./icons/blockblast.jpg" alt="Block Blast"><b>Block Blast</b></a>
@@ -638,9 +1137,9 @@
       <a id="Worlds hardest game 2" class="link" onclick="cloak('/play/worlds-hardest-game-2/')" target="_blank"><span class="bar"></span><img src="./icons/whg.webp" alt="Worlds Hardest Game 2"><b>Worlds hardest game 2</b></a>
       <a id="X Trial Racing" class="link" onclick="cloak('/play/x-trial-racing/')" target="_blank"><span class="bar"></span><img src="./icons/xtr.webp" alt="X Trial Racing"><b>X Trial Racing</b></a>
       <a id="xx142-b2exe" class="link" onclick="cloak('/play/xx142-b2exe/')" target="_blank"><span class="bar"></span><img src="./icons/xx142-b2exe.webp" alt="xx142-b2exe"><b>xx142-b2exe</b></a>
-      <a id="Zombs Royale" class="link" onclick="cloak('/404/')" target="_blank"><span class="bar"></span><img src="./icons/zombs-royale.webp" alt="Zombs Royale"><b>Zombs Royale</b></a>
+      <a id="Zombs Royale" class="link" onclick="cloak('/404.html')" target="_blank"><span class="bar"></span><img src="./icons/zombs-royale.webp" alt="Zombs Royale"><b>Zombs Royale</b></a>
       <a id="Yoshifabrication" class="link" onclick="cloak('/play/yoshifabrication/')" target="_blank"><span class="bar"></span><img src="./icons/yoshifabrication.webp" alt="Yoshifabrication"><b>Yoshifabrication</b></a>
-      <a id="Volley Random" class="link" onclick="cloak('./play/volleyrandom/')" target="_blank"><span class="bar"></span><img src="./icons/volleyrandom.webp" alt="Volley Random"><b>Volley Random</b><span class="badge"><i class="fa-solid fa-link-slash"></i> BROKEN</span></a>
+      <a id="Volley Random" class="link" onclick="cloak('/play/volleyrandom/')" target="_blank"><span class="bar"></span><img src="./icons/volleyrandom.webp" alt="Volley Random"><b>Volley Random</b><span class="badge"><i class="fa-solid fa-link-slash"></i> BROKEN</span></a>
       <a id="Indian Truck Simulator 3D" class="link" onclick="cloak('/play/indiantruck/')" target="_blank"><span class="bar"></span><img src="./icons/truck.webp" alt="Indian Truck Simulator"><b>Indian Truck Simulator 3D</b><span class="badge"><i class="fa-solid fa-link-slash"></i> BROKEN</span></a>
       <a id="SandTris" class="link" onclick="cloak('/play/sandris/')" target="_blank"><span class="bar"></span><img src="./icons/sandtris.webp" alt="SandTris"><b>SandTris</b><span class="badge"><i class="fa-solid fa-link-slash"></i> BROKEN</span></a>
       <a id="AgeofWar" class="link" onclick="cloak('/play/Ages-of-War/')" target="_blank"><span class="bar"></span><img src="./icons/ageofwar.webp" alt="Age of War"><b>Age of War</b><span class="badge"><i class="fa-solid fa-link-slash"></i> BROKEN</span></a>      
@@ -655,12 +1154,6 @@
 
   <!-- Client-side Logic & Handlers -->
   <script>
-    // Tab Cloak Status Button
-    if (getCookie('cloak')) {
-      const toggleBtn = document.getElementById('toggleCloak');
-      if (toggleBtn) toggleBtn.textContent = 'Disable Tab Cloak';
-    }
-
     // Konami Sequence (Spin Screen)
     const konamiCode = ['ArrowUp', 'ArrowUp', 'ArrowDown', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ArrowLeft', 'ArrowRight', 'b', 'a', 'Enter'];
     let konamiCodePosition = 0;

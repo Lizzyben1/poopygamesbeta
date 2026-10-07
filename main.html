@@ -3,46 +3,70 @@
 
 <head>
   <title>Google Classroom</title>
-<link rel="icon" href="icons/favicon.ico" type="image/x-icon">
+  <link rel="icon" type="image/png" href="icons/favicon.png">
+  <link rel="icon" type="image/x-icon" href="icons/favicon.ico">
+  <link rel="shortcut icon" href="icons/favicon.ico">
+  <script src="icons/favicon.js"></script>
   <!-- start of nav bar-->
 <meta name="pushsdk" content="2f49b3c1446c9f02fe413f9196576e82">
   <script x-alias-name="ABC modified">
     class ABC {
-                constructor(config = {}) {
-                    this.type = config.type || "blank";
-                    this.url = config.url || "about:blank";
-                }
-                setType(type) {
-                    if (!type) return;
-                    this.type = type;
-                }
-                setUrl(url) {
-                    if (!url) return;
-                    this.url = url;
-                }
-                getCode() {
-                    return `<iframe style="height:100%; width: 100%; border: none; position: fixed; top: 0; right: 0; left: 0; bottom: 0; border: none" sandbox="allow-forms allow-modals allow-orientation-lock allow-pointer-lock allow-popups allow-popups-to-escape-sandbox allow-presentation allow-same-origin allow-scripts allow-top-navigation allow-top-navigation-by-user-activation" src="` + this.url + `"></iframe>`
-                }
-                open() {
-                        if (this.type == "blank") {
-                        try {
-                            var page = window.open()
-                            page.document.body.innerHTML = `<iframe style="height:100%; width: 100%; border: none; position: fixed; top: 0; right: 0; left: 0; bottom: 0; border: none" sandbox="allow-forms allow-modals allow-orientation-lock allow-pointer-lock allow-popups allow-popups-to-escape-sandbox allow-presentation allow-same-origin allow-scripts allow-top-navigation allow-top-navigation-by-user-activation" src="` + this.url + `"></iframe>`
-                            return page;
-                        } catch {}
-                    } else if (this.type == "blob") {
-                        try {
-                            var page = new Blob([`<iframe style="height:100%; width: 100%; border: none; position: fixed; top: 0; right: 0; left: 0; bottom: 0; border: none" sandbox="allow-forms allow-modals allow-orientation-lock allow-pointer-lock allow-popups allow-popups-to-escape-sandbox allow-presentation allow-same-origin allow-scripts allow-top-navigation allow-top-navigation-by-user-activation" src="` + this.url + `"></iframe>`], {type: "text/html"})
-                            return window.open(URL.createObjectURL(page));
-                        } catch {}
-                    } else if (this.type == "overwrite") {
-                        try {
-                            document.body.innerHTML = `<iframe style="height:100%; width: 100%; border: none; position: fixed; top: 0; right: 0; left: 0; bottom: 0; border: none" sandbox="allow-forms allow-modals allow-orientation-lock allow-pointer-lock allow-popups allow-popups-to-escape-sandbox allow-presentation allow-same-origin allow-scripts allow-top-navigation allow-top-navigation-by-user-activation" src="` + this.url + `"></iframe>`
-                            return false;
-                        } catch {}
-                    }
-                }
+      constructor(config = {}) {
+        this.type = config.type || "blank";
+        this.url = config.url || "about:blank";
+      }
+      setType(type) {
+        if (!type) return;
+        this.type = type;
+      }
+      setUrl(url) {
+        if (!url) return;
+        this.url = url;
+      }
+      open() {
+        if (this.type == "blank") {
+          try {
+            var page = window.open("about:blank", "_blank");
+            if (!page || page.closed || typeof page.closed === "undefined") {
+              return null;
             }
+            var iconData = window.FAVICON_DATA_URI || new URL("icons/favicon.ico", window.location.href).href;
+            var doc = page.document;
+            doc.open();
+            doc.write('<!DOCTYPE html>' +
+              '<html><head>' +
+              '<meta charset="utf-8">' +
+              '<meta name="viewport" content="width=device-width, initial-scale=1.0">' +
+              '<title>Google Classroom</title>' +
+              '<link rel="icon" type="image/png" href="' + iconData + '">' +
+              '<link rel="icon" type="image/x-icon" href="' + iconData + '">' +
+              '<link rel="shortcut icon" href="' + iconData + '">' +
+              '<style>' +
+              '* { margin: 0; padding: 0; box-sizing: border-box; }' +
+              'html, body { width: 100%; height: 100%; overflow: hidden; background: #1C1C1C; }' +
+              'iframe { width: 100%; height: 100%; border: 0; position: fixed; top: 0; left: 0; right: 0; bottom: 0; display: block; }' +
+              '</style>' +
+              '</head><body>' +
+              '<iframe src="' + this.url + '" allow="fullscreen; autoplay; gamepad; clipboard-write; accelerometer; gyroscope" allowfullscreen></iframe>' +
+              '</body></html>');
+            doc.close();
+            try {
+              if (window.FAVICON_DATA_URI && page.document.head) {
+                var flink = page.document.createElement("link");
+                flink.rel = "icon";
+                flink.type = "image/png";
+                flink.href = window.FAVICON_DATA_URI;
+                page.document.head.appendChild(flink);
+              }
+            } catch (e) {}
+            return page;
+          } catch (e) {
+            return null;
+          }
+        }
+        return null;
+      }
+    }
   </script>
 
   <style x-alias-name="navbar">
@@ -259,36 +283,33 @@
                     window.doCloak = true;
                 }
             }
+            function resolveGameUrl(url) {
+                if (!url) return "";
+                if (/^https?:\/\//i.test(url)) return url;
+                var rel = url.replace(/^(\.\/|\/)+/, "");
+                if (!/\/$/.test(rel) && !/\.(html?|php|xhtml)$/i.test(rel)) {
+                    rel += "/";
+                }
+                var base = window.location.href.split(/[?#]/)[0].replace(/[^\/]*$/, "");
+                return new URL(rel, base).href;
+            }
             function cloak(url, absolute){
                 absolute = absolute || false;
-                url = absolute ? url : window.location.href.replace(/\/$/, "") + url;
-                if (window.doCloak){
-                    //alert(url);
-                    //alert("Opening " + url)
-                    //Creates new ABC
-                    var page = new ABC({
-                        "type": "blank", //Blank, blob, or overwrite
-                        "url": url //Any url
-                    })
-                    //Set the type
-                    page.setType("blank");
-                    //Set the url
-                    page.setUrl(url);
-                    //Get iframe code
-                    page.getCode();
-                    //Open page
-                    var win = page.open();
-                    if (!win || win.closed || typeof win.closed=='undefined'){ 
-                        document.cookie = "cloak=; expires=Thu, 18 Dec 2099 12:00:00 UTC";
-                        window.doCloak = false;
-                        alert("Fatal Error:\n\nNAME: ERR_POPUP_BLOCKED\nDESCRIPTION: Allow pop-ups to enable tab cloaking and try again.\n PLEASE CLICK 'allow pop-ups' ON THE TOP RIGHT OF YOUR SCREEN")
-                        return false;
-                    }
+                url = absolute ? url : resolveGameUrl(url);
+                if (!getCookie("cloak") && !window.doCloak){
+                    window.open(url, "_blank");
                     return true;
                 }
-                else{
-                    window.open(url);
+                var page = new ABC({
+                    "type": "blank",
+                    "url": url
+                });
+                var win = page.open();
+                if (!win || win.closed || typeof win.closed=='undefined'){ 
+                    alert("Pop-up blocked!\n\nPlease allow pop-ups for this site to open games in an about:blank tab.\n(Click the pop-up icon in the top right of your address bar)");
+                    return false;
                 }
+                return true;
             }
   </script>
   <!-- cloak end -->
@@ -886,12 +907,12 @@ document.cookie = "password=creeper";
     <span class="badge"><i class="fa-solid fa-circle-exclamation"></i> HELP</span>
 </a>
           <a id="Unblocked Chat" class="link" onclick="cloak('/play/chat/')"target="_blank"><span class="bar"></span><img src="./icons/imessgae.webp"><b>Unblocked Chat</b><span class="badge"><i class="fa fa-star" aria-hidden="true"></i> NEW</span></a>
-          <a id="Volley Random" class="link" onclick="cloak('./play/volleyrandom/')"target="_blank"><span class="bar"></span><img src="./icons/volleyrandom.webp"><b>Volley Random</b><span class="badge"><i class="fa fa-star" aria-hidden="true"></i> NEW</span></a>
+          <a id="Volley Random" class="link" onclick="cloak('/play/volleyrandom/')"target="_blank"><span class="bar"></span><img src="./icons/volleyrandom.webp"><b>Volley Random</b><span class="badge"><i class="fa fa-star" aria-hidden="true"></i> NEW</span></a>
           <a id="Indian Truck Simulator 3D" class="link" onclick="cloak('/play/indiantruck/')"target="_blank"><span class="bar"></span><img src="./icons/truck.webp"><b>Indian Truck Simulator 3D</b><span class="badge"><i class="fa fa-star" aria-hidden="true"></i> NEW</span></a>
           <a id="SandTris" class="link" onclick="cloak('/play/sandris/')"target="_blank"><span class="bar"></span><img src="./icons/sandtris.webp"><b>SandTris</b><span class="badge"><i class="fa fa-star" aria-hidden="true"></i> NEW</span></a>
           <a id="Monkey Mart" class="link" onclick="cloak('/play/monkey-mart/')"target="_blank"><span class="bar"></span><img src="./icons/monkey.webp"><b>Monkey Mart</b><span class="badge"><i class="fa fa-wrench" aria-hidden="true"></i> FIXED</span></a></a>
           <a id="Getaway Shootout" class="link" onclick="cloak('/play/getaway/')"target="_blank"><span class="bar"></span><img src="./icons/getaway.jpeg"><b>Getaway Shootout</b><span class="badge"><i class="fa fa-wrench" aria-hidden="true"></i> FIXED</span></a></a>
-          <a id="Troll Platformer 3" class="link" onclick="cloak('/play/troll-platformer-3')"target="_blank"><span class="bar"></span><img src="./icons/troll-platformer-3.png"><b>Troll Platformer 3</b><span class="badge"><i class="fa fa-star" aria-hidden="true"></i> NEW</span></a>
+          <a id="Troll Platformer 3" class="link" onclick="cloak('/play/troll-platformer-3/')"target="_blank"><span class="bar"></span><img src="./icons/troll-platformer-3.png"><b>Troll Platformer 3</b><span class="badge"><i class="fa fa-star" aria-hidden="true"></i> NEW</span></a>
           <a id="Gambling Simulator" class="link" onclick="cloak('/play/gamble/v1.1/gamble is fun/')"target="_blank"><span class="bar"></span><img src="./icons/gamble.jpg"><b>Gambling Sim</b><span class="badge"><i class="fa fa-credit-card" aria-hidden="true"></i> GAMBLING</span></a>
           <a id="OvO" class="link" onclick="cloak('/play/OvO/')"target="_blank"><span class="bar"></span><img src="./icons/ovo.png"><b>OvO</b></a>
           <a id="Block Blast" class="link" onclick="cloak('/play/blockblast/')"target="_blank"><span class="bar"></span><img src="./icons/blockblast.jpg"><b>Block Blast</b></a>
@@ -1222,7 +1243,7 @@ target="_blank"><span class="bar"></span><img src="./icons/whg.webp"><b>Worlds h
 target="_blank"><span class="bar"></span><img src="./icons/xtr.webp"><b>X Trial Racing</b></a>
           <a id="xx142-b2exe" class="link" onclick="cloak('/play/xx142-b2exe/')"
 target="_blank"><span class="bar"></span><img src="./icons/xx142-b2exe.webp"><b>xx142-b2exe</b></a>
-          <a id="Zombs Royale" class="link" onclick="cloak('/404/')"
+          <a id="Zombs Royale" class="link" onclick="cloak('/404.html')"
 target="_blank"><span class="bar"></span><img src="./icons/zombs-royale.webp"><b>Zombs Royale</b></a>
           <a id="Yoshifabrication" class="link" onclick="cloak('/play/yoshifabrication/')"target="_blank"><span class="bar"></span><img src="./icons/yoshifabrication.webp"><b>Yoshifabrication</b></a>
           <p class="game_title">Please do not play these games in school without permission. Doing so can result
