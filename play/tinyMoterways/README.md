@@ -230,3 +230,78 @@ in front of, a one-cell gap through water, rail or mountain, so level crossings 
 | `src/ui/Overlay.ts` | HTML/SVG HUD, toolbar, dialogs, sound-test panel. |
 | `src/main.ts` | Input (mouse, touch, keyboard) and the game loop. |
 | `scripts/selfcheck.ts` | The headless self-check and balance run. |
+
+## Deploying
+
+The game is a static site: `npm run build` writes everything to `dist/`, with relative asset paths
+(`base: './'` in `vite.config.ts`), so it runs from any address or folder. `netlify.toml` tells
+Netlify to run `npm run build` on Node 22 and publish `dist`.
+
+### 1. Put it on GitHub (its own repository)
+
+Create an empty repository on GitHub (no README, no .gitignore), then in this folder:
+
+```bash
+git init
+```
+
+```bash
+git add .
+```
+
+```bash
+git commit -m "Tiny Motorways"
+```
+
+```bash
+git branch -M main
+```
+
+```bash
+git remote add origin https://github.com/YOUR-NAME/tiny-motorways.git
+```
+
+```bash
+git push -u origin main
+```
+
+### 2. Make a Netlify site for it
+
+1. In Netlify: **Add new site → Import an existing project → GitHub**, and pick the repository.
+2. Leave every build setting as Netlify fills it in from `netlify.toml` (base directory empty, build
+   command `npm run build`, publish directory `dist`).
+3. **Deploy**. The game is now live at its own address, something like
+   `https://YOUR-GAME-SITE.netlify.app/`. Every later `git push` redeploys it.
+
+### 3. Show it at `/play/tinymoterways/` on the main site
+
+In the repository of the main site (`lizzysummerben.netlify.app`), add this line to the `_redirects`
+file in its publish folder (create the file if there is none), then commit and push that repository:
+
+```
+/play/tinymoterways/*  https://YOUR-GAME-SITE.netlify.app/:splat  200
+```
+
+The `200` makes it a proxy, not a redirect: the address bar keeps showing the main site. If the main
+site keeps its redirects in `netlify.toml` instead, the same rule is:
+
+```toml
+[[redirects]]
+  from = "/play/tinymoterways/*"
+  to = "https://YOUR-GAME-SITE.netlify.app/:splat"
+  status = 200
+```
+
+Nothing else about the main site's build settings changes. Link to the game **with the trailing
+slash** (`/play/tinymoterways/`): the game's files are addressed relative to that folder.
+
+Saved games are kept per address, so a game started on the `YOUR-GAME-SITE` address does not show up
+under the main site's address, or the other way round.
+
+### Alternative: the game as a subfolder of the main site's repository
+
+Copy this folder into the main repository (say `games/tiny-motorways/`) and push. Then still create
+a **second** Netlify site from that same repository, with **Base directory** set to
+`games/tiny-motorways` (the build command and publish directory come from the `netlify.toml` in that
+folder), and add the same redirect rule as in step 3. Do **not** set a base directory on the main
+site itself: a Netlify site publishes one folder, so that would replace the main site with the game.
